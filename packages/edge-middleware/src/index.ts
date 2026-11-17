@@ -1,6 +1,6 @@
 /**
  * @redcenterstudio/agent-tollbooth-edge
- * Zero-dependency dual-rail HTTP 402 middleware for Cloudflare Workers, Fetch APIs, and Hono.
+ * Zero-dependency dual-rail HTTP 402 middleware for Cloudflare Workers, Fetch APIs, Next.js, and Hono.
  *
  * Rail A: Open x402 V2 standard (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`)
  * Rail B: Red Center Fiat Agent Wallet (`rcs_receipt_...` verified <1ms via Web Crypto + NonceStore)
@@ -9,13 +9,32 @@
 export type PaymentScheme = 'exact' | 'upto';
 export type TollboothRail = 'x402' | 'fiat_wallet';
 export type FiatReceiptAlg = 'hs256' | 'ed25519';
+export type TollboothMode = 'sandbox' | 'mock' | 'hybrid' | 'x402';
+
+export type TollboothErrorCode =
+  | 'MISSING_PAYMENT'
+  | 'INSUFFICIENT_FUNDS'
+  | 'RECEIPT_EXPIRED'
+  | 'NONCE_REPLAYED'
+  | 'INVALID_SIGNATURE'
+  | 'SPEND_CAP_EXCEEDED'
+  | 'PRO_PASS_REQUIRED'
+  | 'FACILITATOR_ERROR';
 
 export const DEFAULT_FACILITATOR_URL = 'https://tollbooth.redcenterstudio.com';
+export const DEFAULT_PAYMENT_URL = 'https://tollbooth.redcenterstudio.com';
+export const DEFAULT_PAY_TO = '0x000000000000000000000000000000000000dEaD';
 export const DEFAULT_NETWORK = 'eip155:8453';
 export const DEFAULT_USDC_BASE_ASSET = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 export const DEFAULT_EXEMPT_PATHS = ['/health', '/readyz', '/webhook/*'] as const;
+export const DEFAULT_CLOCK_SKEW_SECONDS = 30;
+export const DEFAULT_PRICE_USD = 0.01;
+export const SANDBOX_HMAC_SECRET = 'rcs_sandbox_local_dev_secret_32bytes_deterministic';
 
-const CORS_EXPOSE_HEADERS = 'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-Tollbooth-Rail';
+export const CORS_EXPOSE_HEADERS =
+  'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-Agent-Receipt, WWW-Authenticate, X-Tollbooth-Rail';
+export const CORS_ALLOW_HEADERS =
+  'Content-Type, Authorization, PAYMENT-SIGNATURE, X-Agent-Receipt, Idempotency-Key';
 
 export interface D1LikeRunResult {
   meta?: {
@@ -105,7 +124,13 @@ export interface X402AcceptOption {
 
 export interface X402PaymentRequired {
   x402Version: 2;
+  code: TollboothErrorCode;
   error: string;
+  fix_hint: string;
+  priceUsd: string;
+  priceMicros: number;
+  acceptedRails: Array<'x402-v2' | 'rcs-fiat-wallet'>;
+  paymentUrl: string;
   resource: {
     url: string;
     description: string;
@@ -165,7 +190,8 @@ export interface TollboothRouteConfig {
   pattern: string;
   method?: string | string[];
   scheme?: PaymentScheme;
-  priceMicros: number;
+  priceMicros?: number;
+  priceUsd?: number | string;
   minPriceMicros?: number;
   proPass?: boolean;
   description?: string;
@@ -183,11 +209,16 @@ export interface TollboothRouteConfig {
 }
 
 export interface TollboothConfig {
-  payTo: string;
+  payTo?: string;
+  mode?: TollboothMode;
+  priceUsd?: number | string;
+  priceMicros?: number;
   facilitatorUrl?: string;
+  paymentUrl?: string;
   network?: string;
   asset?: string;
   proPass?: boolean;
+  clockSkewSeconds?: number;
   customPaymentPageHtml?:
     | string
     | ((challenge: X402PaymentRequired, request: Request) => string);
@@ -196,14 +227,20 @@ export interface TollboothConfig {
   exemptPaths?: string[];
   nonceStore?: NonceStore;
   fiatWallet?: FiatWalletConfig;
-  routes: TollboothRouteConfig[];
+  routes?: TollboothRouteConfig[];
   fetchImpl?: typeof fetch;
   nowSeconds?: () => number;
 }
 
 export interface WorkerHandler<Env = unknown> {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>;
+  fetch(request: Request, env?: Env, ctx?: ExecutionContext): Promise<Response>;
 }
+
+export type WorkerFetchFn<Env = unknown> = (
+  request: Request,
+  env?: Env,
+  ctx?: ExecutionContext,
+) => Promise<Response> | Response;
 
 export interface HonoLikeContext {
   req: {
@@ -245,7 +282,7 @@ export function usdToMicros(usd: number | string): number {
 }
 
 /**
- * Format integer microdollars into a fixed 6-decimal USD string (or trimmed USD string).
+ * Format integer microdollars into a trimmed USD string (e.g. `5000` -> `"0.005"`).
  */
 export function microsToUsdString(micros: number): string {
   if (!Number.isSafeInteger(micros) || micros < 0) {
@@ -466,6 +503,77 @@ export async function signFiatReceipt(
   return `rcs_receipt_${signingInput}.${sigB64}`;
 }
 
+/**
+ * Zero-config helper for local `mode: "sandbox"` / `"mock"` testing without API keys or Stripe.
+ */
+export async function createSandboxReceipt(
+  overrides?: Partial<RcsReceiptClaims> & { priceUsd?: number | string; secret?: string },
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const amt =
+    overrides?.amt ??
+    (overrides?.priceUsd !== undefined
+      ? usdToMicros(overrides.priceUsd)
+      : usdToMicros(DEFAULT_PRICE_USD));
+  const claims: RcsReceiptClaims = {
+    v: 1,
+    jti: overrides?.jti ?? `rcpt_sandbox_${crypto.randomUUID()}`,
+    sub: overrides?.sub ?? 'wallet_sandbox_agent',
+    aud: overrides?.aud ?? '*',
+    mth: overrides?.mth ?? '*',
+    amt,
+    iat: overrides?.iat ?? now,
+    exp: overrides?.exp ?? now + 120,
+    ...(overrides?.tier ? { tier: overrides.tier } : {}),
+  };
+  return signFiatReceipt(claims, {
+    alg: 'hs256',
+    secret: overrides?.secret ?? SANDBOX_HMAC_SECRET,
+  });
+}
+
+/**
+ * Zero-config helper generating a Base64-encoded x402 V2 `PAYMENT-SIGNATURE` header for local sandbox runs.
+ */
+export function createSandboxX402Header(overrides?: {
+  priceUsd?: number | string;
+  amount?: string;
+  payTo?: string;
+  from?: string;
+  nonce?: string;
+  scheme?: PaymentScheme;
+  network?: string;
+}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const amount =
+    overrides?.amount ??
+    usdMicrosToUsdcAtomic(
+      overrides?.priceUsd !== undefined
+        ? usdToMicros(overrides.priceUsd)
+        : usdToMicros(DEFAULT_PRICE_USD),
+    );
+  const scheme = overrides?.scheme ?? 'exact';
+  const network = overrides?.network ?? DEFAULT_NETWORK;
+  const sig: X402PaymentSignature = {
+    x402Version: 2,
+    scheme,
+    network,
+    accepted: { scheme, network },
+    payload: {
+      signature: `0x${'ab'.repeat(65)}`,
+      authorization: {
+        from: overrides?.from ?? '0x1234567890abcdef1234567890abcdef12345678',
+        to: overrides?.payTo ?? DEFAULT_PAY_TO,
+        value: amount,
+        validAfter: String(now - 5),
+        validBefore: String(now + 120),
+        nonce: overrides?.nonce ?? `0x${crypto.randomUUID().replace(/-/g, '')}`,
+      },
+    },
+  };
+  return encodePaymentHeader(sig);
+}
+
 function matchesAudience(claimAud: string, expectedAudience: string): boolean {
   if (claimAud === '*') {
     return true;
@@ -568,7 +676,7 @@ export async function verifyFiatReceipt(
   }
 
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const skew = options.clockSkewSeconds ?? 5;
+  const skew = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
 
   if (claims.exp <= now - skew) {
     return { valid: false, reason: 'receipt_expired' };
@@ -593,6 +701,239 @@ export async function verifyFiatReceipt(
     alg: algPart,
     verifiedInMs,
   };
+}
+
+function resolveErrorGuidance(
+  errorReason: string,
+  requiredMicros: number,
+  expectedAudience: string,
+): { code: TollboothErrorCode; fix_hint: string } {
+  const priceStr = `$${microsToUsdString(requiredMicros)} USD (${requiredMicros} microdollars)`;
+  switch (errorReason) {
+    case 'MISSING_PAYMENT':
+    case 'PAYMENT-SIGNATURE or rcs_receipt bearer header is required':
+      return {
+        code: 'MISSING_PAYMENT',
+        fix_hint: `Attach an x402 V2 Base64 PAYMENT-SIGNATURE header or an Authorization: Bearer rcs_receipt_... token for ${priceStr}.`,
+      };
+    case 'INSUFFICIENT_FUNDS':
+    case 'receipt_amount_insufficient':
+    case 'insufficient_payment_amount':
+      return {
+        code: 'INSUFFICIENT_FUNDS',
+        fix_hint: `Payment amount is below the required ${priceStr}. Top up your agent wallet or authorize at least ${requiredMicros} atomic units.`,
+      };
+    case 'RECEIPT_EXPIRED':
+    case 'receipt_expired':
+    case 'receipt_not_yet_valid':
+    case 'authorization_expired_or_not_yet_valid':
+    case 'invalid_authorization_timestamps':
+      return {
+        code: 'RECEIPT_EXPIRED',
+        fix_hint:
+          'Receipt or x402 authorization timestamp is outside the allowed +/-30s window. Issue a fresh receipt or re-sign with current timestamps.',
+      };
+    case 'NONCE_REPLAYED':
+    case 'nonce_replayed':
+    case 'nonce_already_used':
+      return {
+        code: 'NONCE_REPLAYED',
+        fix_hint:
+          'This payment nonce/jti was already redeemed. Generate a new unique nonce or request a fresh receipt before retrying.',
+      };
+    case 'agent_spend_cap_exceeded':
+      return {
+        code: 'SPEND_CAP_EXCEEDED',
+        fix_hint:
+          'Per-agent spend cap reached. Increase perAgentSpendCapMicros or daily_spend_cap_micros on the wallet before retrying.',
+      };
+    case 'pro_pass_required_for_upto':
+      return {
+        code: 'PRO_PASS_REQUIRED',
+        fix_hint:
+          'The metered upto scheme requires Tollbooth Pro Pass. Set proPass: true (or switch the route scheme to "exact").',
+      };
+    case 'facilitator_verify_http_error':
+    case 'facilitator_settlement_failed':
+    case 'facilitator_settlement_rejected':
+    case 'facilitator_unreachable':
+    case 'fiat_wallet_not_enabled':
+    case 'hmac_verifier_not_configured':
+    case 'ed25519_verifier_not_configured':
+    case 'signature_verification_error':
+      return {
+        code: 'FACILITATOR_ERROR',
+        fix_hint:
+          'Verify facilitatorUrl and RECEIPT_SIGNING_SECRET / ed25519PublicKey configuration, or pass mode: "sandbox" for zero-config local testing.',
+      };
+    default:
+      return {
+        code: 'INVALID_SIGNATURE',
+        fix_hint: `Signature or payload validation failed (${errorReason}). Verify payload formatting, signing key, network, payTo, and audience (${expectedAudience}).`,
+      };
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Self-contained Red Center Studio Industrial HTML 402 Checkout Card rendered when
+ * a browser sends `Accept: text/html` to a gated endpoint.
+ */
+export function renderDefault402HtmlPage(
+  challenge: X402PaymentRequired,
+  request: Request,
+): string {
+  const url = new URL(request.url);
+  const accept = challenge.accepts[0];
+  const amountAtomic = accept?.amount ?? String(challenge.priceMicros);
+  const payTo = accept?.payTo ?? DEFAULT_PAY_TO;
+  const network = accept?.network ?? DEFAULT_NETWORK;
+  const scheme = accept?.scheme ?? 'exact';
+  const railsText = challenge.acceptedRails.includes('rcs-fiat-wallet')
+    ? 'x402 V2 (USDC) + Red Center Fiat Wallet'
+    : 'x402 V2 (USDC)';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>402 Payment Required — Agent Tollbooth 402</title>
+  <style>
+    :root {
+      --bg: #1F2937;
+      --surface: #111827;
+      --amber: #D97706;
+      --emerald: #10B981;
+      --text: #F9FAFB;
+      --muted: #9CA3AF;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .card {
+      width: 100%;
+      max-width: 560px;
+      background: var(--surface);
+      border: 1px solid #374151;
+      border-top: 4px solid var(--amber);
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+    }
+    .badges { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .badge {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .badge-amber { background: rgba(217, 119, 6, 0.18); color: #FBBF24; border: 1px solid var(--amber); }
+    .badge-emerald { background: rgba(16, 185, 129, 0.14); color: var(--emerald); border: 1px solid var(--emerald); }
+    h1 { margin: 0 0 8px; font-size: 22px; color: var(--text); }
+    p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 18px;
+      background: #1F2937;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
+    .val { font-size: 14px; font-weight: 600; color: var(--text); word-break: break-all; margin-top: 2px; }
+    .price { font-size: 20px; color: #FBBF24; }
+    .hint {
+      background: rgba(217, 119, 6, 0.1);
+      border-left: 3px solid var(--amber);
+      padding: 12px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 20px;
+    }
+    .code {
+      background: #0B111B;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: #E5E7EB;
+      overflow-x: auto;
+      margin-bottom: 20px;
+    }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .btn {
+      display: inline-block;
+      background: var(--amber);
+      color: #111827;
+      font-weight: 700;
+      font-size: 14px;
+      text-decoration: none;
+      padding: 11px 18px;
+      border-radius: 8px;
+    }
+    .brand { margin-left: auto; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="badges">
+      <span class="badge badge-amber">[402 CHALLENGE] ${escapeHtml(challenge.code)}</span>
+      <span class="badge badge-emerald">[200 SETTLED] &lt;1ms Edge Ready</span>
+    </div>
+    <h1>HTTP 402 Payment Required</h1>
+    <p>${escapeHtml(challenge.resource.description)}</p>
+    <div class="grid">
+      <div>
+        <div class="label">Endpoint</div>
+        <div class="val">${escapeHtml(request.method.toUpperCase())} ${escapeHtml(url.pathname)}</div>
+      </div>
+      <div>
+        <div class="label">Price (${escapeHtml(scheme)})</div>
+        <div class="val price">$${escapeHtml(challenge.priceUsd)} USD</div>
+      </div>
+      <div>
+        <div class="label">Accepted Rails</div>
+        <div class="val">${escapeHtml(railsText)}</div>
+      </div>
+      <div>
+        <div class="label">x402 Network / Atomic</div>
+        <div class="val">${escapeHtml(network)} &middot; ${escapeHtml(amountAtomic)} USDC</div>
+      </div>
+    </div>
+    <div class="hint"><strong>How to pay:</strong> ${escapeHtml(challenge.fix_hint)}</div>
+    <div class="code">curl -H "PAYMENT-SIGNATURE: &lt;base64_x402_v2&gt;" "${escapeHtml(request.url)}"
+curl -H "Authorization: Bearer rcs_receipt_..." "${escapeHtml(request.url)}"
+# payTo: ${escapeHtml(payTo)}</div>
+    <div class="actions">
+      <a class="btn" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Fund Agent Wallet</a>
+      <span class="brand">Red Center Studio &middot; Agent Tollbooth 402</span>
+    </div>
+  </main>
+</body>
+</html>`;
 }
 
 function matchPathPattern(pattern: string, pathname: string): boolean {
@@ -652,10 +993,101 @@ function extractFiatReceiptToken(request: Request): string | null {
   return null;
 }
 
+interface NormalizedRoute extends TollboothRouteConfig {
+  resolvedPriceMicros: number;
+}
+
+interface NormalizedConfig extends TollboothConfig {
+  payTo: string;
+  mode: TollboothMode;
+  clockSkewSeconds: number;
+  normalizedRoutes: NormalizedRoute[];
+  fetchImpl?: typeof fetch;
+}
+
+function createSandboxFacilitatorFetch(): typeof fetch {
+  return async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const rawBody = init?.body ? String(init.body) : '{}';
+    const body = JSON.parse(rawBody) as {
+      paymentPayload?: X402PaymentSignature;
+      paymentRequirements?: { amount?: string; network?: string };
+      settleAmount?: string;
+    };
+    if (url.endsWith('/verify')) {
+      const ok =
+        body.paymentPayload?.x402Version === 2 &&
+        Boolean(body.paymentPayload?.payload?.signature) &&
+        Boolean(body.paymentPayload?.payload?.authorization?.nonce);
+      return Response.json({
+        isValid: ok,
+        invalidReason: ok ? null : 'invalid_sandbox_payload',
+      });
+    }
+    if (url.endsWith('/settle')) {
+      const nonce = body.paymentPayload?.payload?.authorization?.nonce ?? 'sandbox';
+      return Response.json({
+        success: true,
+        txHash: `0xsandbox_${nonce.replace(/^0x/, '').slice(0, 32)}`,
+        network: body.paymentRequirements?.network ?? DEFAULT_NETWORK,
+        settledAmount: body.settleAmount ?? body.paymentRequirements?.amount ?? '10000',
+        errorReason: null,
+      });
+    }
+    return Response.json({ error: 'unsupported_sandbox_route' }, { status: 404 });
+  };
+}
+
+function normalizeConfig(config: TollboothConfig): NormalizedConfig {
+  const mode: TollboothMode = config.mode ?? 'hybrid';
+  const defaultMicros =
+    config.priceMicros ??
+    (config.priceUsd !== undefined ? usdToMicros(config.priceUsd) : usdToMicros(DEFAULT_PRICE_USD));
+  const payTo = config.payTo ?? DEFAULT_PAY_TO;
+  const isSandbox = mode === 'sandbox' || mode === 'mock';
+
+  const fiatWallet: FiatWalletConfig | undefined = isSandbox
+    ? {
+        clearinghouseUrl:
+          config.fiatWallet?.clearinghouseUrl ??
+          config.facilitatorUrl ??
+          `${DEFAULT_FACILITATOR_URL}/sandbox`,
+        clockSkewSeconds:
+          config.fiatWallet?.clockSkewSeconds ??
+          config.clockSkewSeconds ??
+          DEFAULT_CLOCK_SKEW_SECONDS,
+        ...config.fiatWallet,
+        hmacSecret: config.fiatWallet?.hmacSecret ?? SANDBOX_HMAC_SECRET,
+      }
+    : config.fiatWallet;
+
+  const rawRoutes =
+    config.routes && config.routes.length > 0
+      ? config.routes
+      : [{ pattern: '/*', scheme: 'exact' as PaymentScheme, priceMicros: defaultMicros }];
+
+  const normalizedRoutes: NormalizedRoute[] = rawRoutes.map((r) => ({
+    ...r,
+    resolvedPriceMicros:
+      r.priceMicros ??
+      (r.priceUsd !== undefined ? usdToMicros(r.priceUsd) : defaultMicros),
+  }));
+
+  return {
+    ...config,
+    payTo,
+    mode,
+    clockSkewSeconds: config.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS,
+    fiatWallet,
+    fetchImpl: config.fetchImpl ?? (isSandbox ? createSandboxFacilitatorFetch() : undefined),
+    normalizedRoutes,
+  };
+}
+
 function buildPaymentRequiredChallenge(
   request: Request,
-  config: TollboothConfig,
-  route: TollboothRouteConfig,
+  config: NormalizedConfig,
+  route: NormalizedRoute,
   errorReason: string,
 ): X402PaymentRequired {
   const scheme: PaymentScheme = route.scheme ?? 'exact';
@@ -663,24 +1095,39 @@ function buildPaymentRequiredChallenge(
   const asset = route.asset ?? config.asset ?? DEFAULT_USDC_BASE_ASSET;
   const payTo = route.payTo ?? config.payTo;
   const maxTimeoutSeconds = route.maxTimeoutSeconds ?? 60;
-  const amount = usdMicrosToUsdcAtomic(route.priceMicros);
+  const priceMicros = route.resolvedPriceMicros;
+  const amount = usdMicrosToUsdcAtomic(priceMicros);
+  const paymentUrl = config.paymentUrl ?? DEFAULT_PAYMENT_URL;
+
+  const guidance = resolveErrorGuidance(errorReason, priceMicros, request.url);
+  const acceptedRails: Array<'x402-v2' | 'rcs-fiat-wallet'> = config.fiatWallet
+    ? ['x402-v2', 'rcs-fiat-wallet']
+    : ['x402-v2'];
 
   const extensions: Record<string, unknown> = {};
   if (config.fiatWallet) {
     extensions.fiatAgentWallet = {
-      clearinghouseUrl: config.fiatWallet.clearinghouseUrl ?? config.facilitatorUrl ?? DEFAULT_FACILITATOR_URL,
+      clearinghouseUrl:
+        config.fiatWallet.clearinghouseUrl ?? config.facilitatorUrl ?? DEFAULT_FACILITATOR_URL,
       headers: ['Authorization: Bearer rcs_receipt_...', 'X-Agent-Receipt'],
-      priceMicros: route.priceMicros,
+      priceMicros,
       currency: 'USD_MICROS',
     };
   }
 
   return {
     x402Version: 2,
+    code: guidance.code,
     error: errorReason,
+    fix_hint: guidance.fix_hint,
+    priceUsd: microsToUsdString(priceMicros),
+    priceMicros,
+    acceptedRails,
+    paymentUrl,
     resource: {
       url: request.url,
-      description: route.description ?? `Paid API resource (${request.method} ${new URL(request.url).pathname})`,
+      description:
+        route.description ?? `Paid API resource (${request.method} ${new URL(request.url).pathname})`,
       mimeType: route.mimeType ?? 'application/json',
     },
     accepts: [
@@ -703,28 +1150,49 @@ function buildPaymentRequiredChallenge(
 
 function create402Response(
   request: Request,
-  config: TollboothConfig,
+  config: NormalizedConfig,
   challenge: X402PaymentRequired,
 ): Response {
   const encodedRequired = encodePaymentHeader(challenge);
   const headers = new Headers({
     'PAYMENT-REQUIRED': encodedRequired,
+    'WWW-Authenticate': `x402, Bearer realm="agent-tollbooth-402", error="${challenge.code}"`,
     'Access-Control-Expose-Headers': CORS_EXPOSE_HEADERS,
+    'Cache-Control': 'no-store',
   });
 
   const acceptHeader = request.headers.get('Accept') ?? '';
-  const proEnabled = Boolean(config.proPass);
-  if (proEnabled && config.customPaymentPageHtml && acceptHeader.includes('text/html')) {
+  if (acceptHeader.includes('text/html')) {
     const html =
-      typeof config.customPaymentPageHtml === 'function'
-        ? config.customPaymentPageHtml(challenge, request)
-        : config.customPaymentPageHtml;
+      config.proPass && config.customPaymentPageHtml
+        ? typeof config.customPaymentPageHtml === 'function'
+          ? config.customPaymentPageHtml(challenge, request)
+          : config.customPaymentPageHtml
+        : renderDefault402HtmlPage(challenge, request);
     headers.set('Content-Type', 'text/html; charset=utf-8');
     return new Response(html, { status: 402, headers });
   }
 
   headers.set('Content-Type', 'application/json; charset=utf-8');
   return new Response(JSON.stringify(challenge), { status: 402, headers });
+}
+
+function attachCorsExposeHeaders(response: Response, includePreflight = false): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  if (includePreflight) {
+    if (!headers.has('Access-Control-Allow-Headers')) {
+      headers.set('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
+    }
+    if (!headers.has('Access-Control-Allow-Methods')) {
+      headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    }
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function cloneWithPaymentResponse(
@@ -751,27 +1219,29 @@ function parseBigIntAmount(value: string): bigint | null {
 }
 
 interface TollboothEvaluatorResult {
+  isPreflight?: boolean;
   earlyResponse?: Response;
   finalizeResponse?: (downstreamResponse: Response) => Promise<Response>;
 }
 
 async function evaluateTollboothRequest(
   request: Request,
-  config: TollboothConfig,
+  rawConfig: TollboothConfig,
   defaultNonceStore: NonceStore,
   defaultSpendTracker: SpendTracker,
 ): Promise<TollboothEvaluatorResult> {
   if (request.method.toUpperCase() === 'OPTIONS') {
-    return {};
+    return { isPreflight: true };
   }
 
+  const config = normalizeConfig(rawConfig);
   const url = new URL(request.url);
   const exemptPaths = config.exemptPaths ?? [...DEFAULT_EXEMPT_PATHS];
   if (exemptPaths.some((pat) => matchPathPattern(pat, url.pathname))) {
     return {};
   }
 
-  const route = config.routes.find(
+  const route = config.normalizedRoutes.find(
     (r) => matchPathPattern(r.pattern, url.pathname) && isMethodMatch(r.method, request.method),
   );
   if (!route) {
@@ -794,6 +1264,7 @@ async function evaluateTollboothRequest(
   const nonceStore = config.nonceStore ?? defaultNonceStore;
   const spendTracker = config.spendTracker ?? defaultSpendTracker;
   const nowSec = config.nowSeconds ? config.nowSeconds() : Math.floor(Date.now() / 1000);
+  const requiredMicros = route.resolvedPriceMicros;
 
   // Rail B: Red Center Fiat Agent Wallet (<1ms Web Crypto verification)
   const receiptToken = extractFiatReceiptToken(request);
@@ -805,9 +1276,10 @@ async function evaluateTollboothRequest(
 
     const verifyResult = await verifyFiatReceipt(receiptToken, {
       ...config.fiatWallet,
+      clockSkewSeconds: config.fiatWallet.clockSkewSeconds ?? config.clockSkewSeconds,
       expectedAudience: request.url,
       expectedMethod: request.method,
-      requiredMicros: route.priceMicros,
+      requiredMicros,
       nowSeconds: nowSec,
     });
 
@@ -816,7 +1288,7 @@ async function evaluateTollboothRequest(
         request,
         config,
         route,
-        verifyResult.reason ?? 'invalid_fiat_receipt',
+        verifyResult.reason ?? 'invalid_receipt_signature',
       );
       return { earlyResponse: create402Response(request, config, challenge) };
     }
@@ -837,7 +1309,7 @@ async function evaluateTollboothRequest(
     if (config.perAgentSpendCapMicros !== undefined) {
       const capCheck = await spendTracker.checkAndRecord(
         claims.sub,
-        route.priceMicros,
+        requiredMicros,
         config.perAgentSpendCapMicros,
       );
       if (!capCheck.allowed) {
@@ -862,7 +1334,7 @@ async function evaluateTollboothRequest(
             await nonceStore.release(claims.jti);
           }
           if (spendRecorded && spendTracker.rollback) {
-            await spendTracker.rollback(claims.sub, route.priceMicros);
+            await spendTracker.rollback(claims.sub, requiredMicros);
           }
           return downstreamResponse;
         }
@@ -873,7 +1345,7 @@ async function evaluateTollboothRequest(
             transaction: claims.jti,
             network: 'rcs:fiat-wallet',
             payer: claims.sub,
-            settledAmount: String(route.priceMicros),
+            settledAmount: String(requiredMicros),
             rail: 'fiat_wallet',
             errorReason: null,
           },
@@ -908,7 +1380,7 @@ async function evaluateTollboothRequest(
   const expectedNetwork = route.network ?? config.network ?? DEFAULT_NETWORK;
   const expectedAsset = route.asset ?? config.asset ?? DEFAULT_USDC_BASE_ASSET;
   const expectedPayTo = route.payTo ?? config.payTo;
-  const requiredAtomicStr = usdMicrosToUsdcAtomic(route.priceMicros);
+  const requiredAtomicStr = usdMicrosToUsdcAtomic(requiredMicros);
   const requiredAtomic = BigInt(requiredAtomicStr);
 
   if (parsedSig.x402Version !== 2 || !parsedSig.payload?.authorization || !parsedSig.payload?.signature) {
@@ -950,7 +1422,13 @@ async function evaluateTollboothRequest(
 
   const validAfter = Number(auth.validAfter);
   const validBefore = Number(auth.validBefore);
-  if (!Number.isSafeInteger(validAfter) || !Number.isSafeInteger(validBefore) || nowSec < validAfter || nowSec > validBefore) {
+  const skew = config.clockSkewSeconds;
+  if (
+    !Number.isSafeInteger(validAfter) ||
+    !Number.isSafeInteger(validBefore) ||
+    nowSec < validAfter - skew ||
+    nowSec > validBefore + skew
+  ) {
     const challenge = buildPaymentRequiredChallenge(request, config, route, 'authorization_expired_or_not_yet_valid');
     return { earlyResponse: create402Response(request, config, challenge) };
   }
@@ -973,22 +1451,34 @@ async function evaluateTollboothRequest(
     maxTimeoutSeconds: route.maxTimeoutSeconds ?? 60,
   };
 
-  const verifyResp = await fetchFn(`${facilitatorBase}/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      x402Version: 2,
-      paymentPayload: parsedSig,
-      paymentRequirements,
-    }),
-  });
+  let verifyResp: Response;
+  try {
+    verifyResp = await fetchFn(`${facilitatorBase}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        x402Version: 2,
+        paymentPayload: parsedSig,
+        paymentRequirements,
+      }),
+    });
+  } catch {
+    const challenge = buildPaymentRequiredChallenge(request, config, route, 'facilitator_unreachable');
+    return { earlyResponse: create402Response(request, config, challenge) };
+  }
 
   if (!verifyResp.ok) {
     const challenge = buildPaymentRequiredChallenge(request, config, route, 'facilitator_verify_http_error');
     return { earlyResponse: create402Response(request, config, challenge) };
   }
 
-  const verifyJson = (await verifyResp.json()) as X402VerifyResponse;
+  let verifyJson: X402VerifyResponse;
+  try {
+    verifyJson = (await verifyResp.json()) as X402VerifyResponse;
+  } catch {
+    const challenge = buildPaymentRequiredChallenge(request, config, route, 'facilitator_verify_http_error');
+    return { earlyResponse: create402Response(request, config, challenge) };
+  }
   if (!verifyJson.isValid) {
     const challenge = buildPaymentRequiredChallenge(
       request,
@@ -1014,7 +1504,7 @@ async function evaluateTollboothRequest(
   if (config.perAgentSpendCapMicros !== undefined) {
     const capCheck = await spendTracker.checkAndRecord(
       auth.from,
-      route.priceMicros,
+      requiredMicros,
       config.perAgentSpendCapMicros,
     );
     if (!capCheck.allowed) {
@@ -1034,7 +1524,7 @@ async function evaluateTollboothRequest(
           await nonceStore.release(auth.nonce);
         }
         if (spendRecorded && spendTracker.rollback) {
-          await spendTracker.rollback(auth.from, route.priceMicros);
+          await spendTracker.rollback(auth.from, requiredMicros);
         }
         return downstreamResponse;
       }
@@ -1056,27 +1546,64 @@ async function evaluateTollboothRequest(
         }
       }
 
-      const settleResp = await fetchFn(`${facilitatorBase}/settle`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `x402_${auth.nonce}`,
-        },
-        body: JSON.stringify({
-          x402Version: 2,
-          paymentPayload: parsedSig,
-          paymentRequirements,
-          settleAmount: settleAtomic.toString(),
-        }),
-      });
+      let settleResp: Response;
+      try {
+        settleResp = await fetchFn(`${facilitatorBase}/settle`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': `x402_${auth.nonce}`,
+          },
+          body: JSON.stringify({
+            x402Version: 2,
+            paymentPayload: parsedSig,
+            paymentRequirements,
+            settleAmount: settleAtomic.toString(),
+          }),
+        });
+      } catch {
+        if (nonceStore.release) {
+          await nonceStore.release(auth.nonce);
+        }
+        if (spendRecorded && spendTracker.rollback) {
+          await spendTracker.rollback(auth.from, requiredMicros);
+        }
+        const challenge = buildPaymentRequiredChallenge(request, config, route, 'facilitator_unreachable');
+        return create402Response(request, config, challenge);
+      }
 
       if (!settleResp.ok) {
+        if (nonceStore.release) {
+          await nonceStore.release(auth.nonce);
+        }
+        if (spendRecorded && spendTracker.rollback) {
+          await spendTracker.rollback(auth.from, requiredMicros);
+        }
         const challenge = buildPaymentRequiredChallenge(request, config, route, 'facilitator_settlement_failed');
         return create402Response(request, config, challenge);
       }
 
-      const settleJson = (await settleResp.json()) as X402SettleResponse;
+      let settleJson: X402SettleResponse;
+      try {
+        settleJson = (await settleResp.json()) as X402SettleResponse;
+      } catch {
+        if (nonceStore.release) {
+          await nonceStore.release(auth.nonce);
+        }
+        if (spendRecorded && spendTracker.rollback) {
+          await spendTracker.rollback(auth.from, requiredMicros);
+        }
+        const challenge = buildPaymentRequiredChallenge(request, config, route, 'facilitator_settlement_failed');
+        return create402Response(request, config, challenge);
+      }
+
       if (!settleJson.success) {
+        if (nonceStore.release) {
+          await nonceStore.release(auth.nonce);
+        }
+        if (spendRecorded && spendTracker.rollback) {
+          await spendTracker.rollback(auth.from, requiredMicros);
+        }
         const challenge = buildPaymentRequiredChallenge(
           request,
           config,
@@ -1104,19 +1631,33 @@ async function evaluateTollboothRequest(
 }
 
 /**
- * Wrap a Cloudflare Worker `ExportedHandler` with dual-rail HTTP 402 protection.
+ * Wrap a Cloudflare Worker `ExportedHandler` or bare Fetch handler `(request, env, ctx) => Response`
+ * with dual-rail HTTP 402 protection.
  */
 export function withTollbooth<Env = unknown>(
   configOrFactory: TollboothConfig | ((env: Env) => TollboothConfig),
-  handler: WorkerHandler<Env>,
+  handlerOrFn: WorkerHandler<Env> | WorkerFetchFn<Env>,
 ): WorkerHandler<Env> {
   const defaultNonceStore = new MemoryNonceStore();
   const defaultSpendTracker = new MemorySpendTracker();
 
+  const invokeHandler = async (
+    request: Request,
+    env?: Env,
+    ctx?: ExecutionContext,
+  ): Promise<Response> => {
+    if (typeof handlerOrFn === 'function') {
+      return handlerOrFn(request, env, ctx);
+    }
+    return handlerOrFn.fetch(request, env, ctx);
+  };
+
   return {
-    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    async fetch(request: Request, env?: Env, ctx?: ExecutionContext): Promise<Response> {
       const config =
-        typeof configOrFactory === 'function' ? configOrFactory(env) : configOrFactory;
+        typeof configOrFactory === 'function'
+          ? configOrFactory(env as Env)
+          : configOrFactory;
       const evaluation = await evaluateTollboothRequest(
         request,
         config,
@@ -1128,11 +1669,18 @@ export function withTollbooth<Env = unknown>(
         return evaluation.earlyResponse;
       }
 
-      const downstream = await handler.fetch(request, env, ctx);
+      const downstream = await invokeHandler(request, env, ctx);
+      if (evaluation.isPreflight) {
+        if (downstream.status === 404 || downstream.status === 405) {
+          const preflight = new Response(null, { status: 204, headers: downstream.headers });
+          return attachCorsExposeHeaders(preflight, true);
+        }
+        return attachCorsExposeHeaders(downstream, true);
+      }
       if (evaluation.finalizeResponse) {
         return evaluation.finalizeResponse(downstream);
       }
-      return downstream;
+      return attachCorsExposeHeaders(downstream, false);
     },
   };
 }
@@ -1158,8 +1706,12 @@ export function honoTollbooth(config: TollboothConfig): HonoLikeMiddleware {
     }
 
     await next();
-    if (c.res && evaluation.finalizeResponse) {
+    if (c.res && evaluation.isPreflight) {
+      c.res = attachCorsExposeHeaders(c.res, true);
+    } else if (c.res && evaluation.finalizeResponse) {
       c.res = await evaluation.finalizeResponse(c.res);
+    } else if (c.res) {
+      c.res = attachCorsExposeHeaders(c.res, false);
     }
     return c.res;
   };

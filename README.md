@@ -1,19 +1,52 @@
 # Agent Tollbooth 402
 
-**Monetize APIs, Cloudflare Workers, Hono apps, and MCP servers in under 60 seconds with dual-rail HTTP 402 payments.**
+**Monetize APIs, Cloudflare Workers, Hono apps, Next.js routes, and MCP servers in under 60 seconds with dual-rail HTTP 402 payments.**
 
-Built by [Red Center Studio](https://redcenterstudio.com) for both **Google Antigravity** and **Claude Code**.
+Built by [Red Center Studio](https://redcenterstudio.com) for **Google Antigravity** and **Claude Code**.
 
 ---
 
-## Dual-Rail Architecture
+## 3-Line Quickstart (30-Second Zero-Config Sandbox)
 
-`agent-tollbooth-402` combines the open **x402 V2** crypto HTTP payment standard with **Red Center Fiat Agent Wallets** so agents can pay `$0.001–$0.10` per call with either on-chain USDC or Stripe-funded prepaid bearer receipts verified in `<1ms` at the edge.
+```bash
+npm install
+npm run validate
+npm run test:sandbox
+```
+
+Zero API keys, zero crypto wallets, and zero Stripe setup required to run your first `402 -> sign -> 200 OK` loop locally.
+
+---
+
+## 5-Line `withTollbooth` Setup
+
+Copy-paste into any Cloudflare Worker, Web Fetch handler, or Next.js route:
+
+```ts
+import { withTollbooth } from "@redcenterstudio/agent-tollbooth-edge";
+
+export default withTollbooth({ priceUsd: 0.01, mode: "hybrid" }, async (request) => {
+  return Response.json({ ok: true, path: new URL(request.url).pathname });
+});
+```
+
+- **Local test without wallets or keys:** change `mode: "hybrid"` to `mode: "sandbox"` and call `createSandboxReceipt()` or `createSandboxX402Header()`.
+- **Hono middleware:** `app.use("/api/*", honoTollbooth({ priceUsd: 0.01, mode: "hybrid" }))`.
+- **Cloudflare D1 replay protection:** pass `nonceStore: new D1NonceStore(env.DB)` inside `withTollbooth((env) => ({ ... }), handler)`.
+
+---
+
+## Dual-Rail Architecture & Browser 402 Checkout Card
+
+`agent-tollbooth-402` supports both **x402 V2** on-chain USDC authorizations and **Red Center Fiat Agent Wallets** verified in `<1ms` via Web Crypto (`HMAC-SHA256` / `Ed25519`).
+
+- **Programmatic AI Agents (`Accept: application/json`)**: Receive `402 Payment Required` with Base64 `PAYMENT-REQUIRED`, `WWW-Authenticate`, CORS `Access-Control-Expose-Headers`, `priceUsd`, `acceptedRails`, `code`, and a plain-English `fix_hint`.
+- **Human Browser Requests (`Accept: text/html`)**: Receive a responsive Red Center Studio Industrial `402` Checkout Card (`#1F2937` Charcoal, `#D97706` Safety Amber, `#10B981` Emerald) displaying endpoint details, price, payment curl snippets, and a **Fund Agent Wallet** action link.
 
 ```mermaid
 flowchart LR
-    Agent["AI Agent / MCP Client"] -->|1. Request API or /mcp| Edge["@redcenterstudio/agent-tollbooth-edge"]
-    Edge -->|2. Unpaid -> 402 + Base64 PAYMENT-REQUIRED| Agent
+    Agent["AI Agent / Browser"] -->|1. Request API or /mcp| Edge["@redcenterstudio/agent-tollbooth-edge"]
+    Edge -->|2. Unpaid -> 402 JSON or HTML Card| Agent
     Agent -->|3A. Rail A: PAYMENT-SIGNATURE x402 V2| Edge
     Agent -->|3B. Rail B: Bearer rcs_receipt_... <1ms Web Crypto| Edge
     Edge -->|4A. /verify & /settle| Facilitator["Clearinghouse Worker / Facilitator"]
@@ -24,100 +57,18 @@ flowchart LR
 
 ---
 
-## Pricing & Clearinghouse Tiers
+## Pricing & Revenue Split
 
-| Tier | Pricing | Clearinghouse Fee | Capabilities Included |
+| Tier | Price | Clearinghouse Fee (Developer Net) | What You Get |
 | :--- | :--- | :--- | :--- |
-| **Free / BYO x402 Mode** | **`$0`** | `0%` (BYO facilitator) | Unlimited `/scan-routes`, zero-dependency middleware injection, `/test-agent` simulator, `exact` x402 V2 scheme with any public or self-hosted facilitator. |
-| **Hybrid Fiat + x402 Clearinghouse** | **`$0/mo`** | **`7%`** | Enables Stripe-funded Fiat Agent Wallets (`rcs_receipt_...` `<1ms` edge verification) + automated Stripe Connect payouts via `tollbooth.redcenterstudio.com`. |
-| **Tollbooth Pro Pass** | **`$39` one-time** (`$79` Agency) | **`3%`** | Drops clearinghouse fee from `7%` to `3%`, unlocks `upto` dynamic per-token/per-KB metering, custom HTML `402` payment pages, and per-agent spend caps. |
+| **Free / BYO x402 Mode** | **`$0`** | **`0%`** (`100%` net) | Unlimited `/scan-routes`, zero-dependency middleware injection, `/test-agent` simulator, `exact` x402 V2 scheme with any facilitator. |
+| **Hybrid Fiat + x402 Clearinghouse** | **`$0/mo`** | **`7%`** (`93%` net) | Enables Stripe-funded Fiat Agent Wallets (`rcs_receipt_...` `<1ms` edge verification) + automated Stripe Connect payouts via `tollbooth.redcenterstudio.com`. |
+| **Tollbooth Pro Pass** | **`$39`** one-time (`$79` Agency) | **`3%`** (`97%` net) | Drops clearinghouse fee from `7%` to `3%`, unlocks `upto` dynamic per-token/per-KB metering, custom HTML `402` pages, and per-agent spend caps. |
 | **Done-For-You Integration** | **From `$399`** | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping, D1 ledger setup, and verification by [Red Center Studio](https://redcenterstudio.com). |
 
 ---
 
-## 60-Second Quickstart (Cloudflare Workers & Hono)
-
-### Cloudflare Workers (`withTollbooth`)
-
-```ts
-import {
-  D1NonceStore,
-  usdToMicros,
-  withTollbooth,
-} from "@redcenterstudio/agent-tollbooth-edge";
-
-interface Env {
-  DB: D1Database;
-  TOLLBOOTH_PAY_TO_ADDRESS: string;
-  RECEIPT_SIGNING_SECRET: string;
-}
-
-export default withTollbooth<Env>(
-  (env) => ({
-    payTo: env.TOLLBOOTH_PAY_TO_ADDRESS,
-    facilitatorUrl: "https://tollbooth.redcenterstudio.com",
-    nonceStore: new D1NonceStore(env.DB),
-    fiatWallet: {
-      hmacSecret: env.RECEIPT_SIGNING_SECRET,
-      clearinghouseUrl: "https://tollbooth.redcenterstudio.com",
-    },
-    routes: [
-      {
-        pattern: "/api/v1/lookup",
-        method: "GET",
-        scheme: "exact",
-        priceMicros: usdToMicros("0.005"), // $0.005 = 5,000 microdollars
-        description: "Low-latency lookup endpoint",
-      },
-    ],
-  }),
-  {
-    async fetch(request, env, ctx) {
-      return Response.json({ ok: true, result: "Paid edge payload" });
-    },
-  },
-);
-```
-
-### Hono (`honoTollbooth`)
-
-```ts
-import { Hono } from "hono";
-import {
-  MemoryNonceStore,
-  honoTollbooth,
-  usdToMicros,
-} from "@redcenterstudio/agent-tollbooth-edge";
-
-const app = new Hono();
-
-app.use(
-  "/api/*",
-  honoTollbooth({
-    payTo: process.env.TOLLBOOTH_PAY_TO_ADDRESS ?? "0x000000000000000000000000000000000000dEaD",
-    proPass: true,
-    nonceStore: new MemoryNonceStore(),
-    fiatWallet: { hmacSecret: process.env.RECEIPT_SIGNING_SECRET },
-    routes: [
-      {
-        pattern: "/api/pro/generate",
-        method: "POST",
-        scheme: "upto",
-        priceMicros: usdToMicros("0.05"),
-        meterUsage: async (_req, res, minAtomic, maxAtomic) => {
-          const kb = BigInt(Math.max(1, Math.ceil((await res.clone().text()).length / 1024)));
-          const total = minAtomic + kb * 1000n;
-          return total > maxAtomic ? maxAtomic : total;
-        },
-      },
-    ],
-  }),
-);
-```
-
----
-
-## Included Plugin Capabilities (Antigravity + Claude Code)
+## Plugin Installation (Antigravity + Claude Code)
 
 Install in Claude Code:
 
@@ -127,27 +78,25 @@ Install in Claude Code:
 
 - **Remote MCP Server (`mcp_config.json` & `.mcp.json`)**: Connects to `https://tollbooth.redcenterstudio.com/mcp` via Streamable HTTP (`tollbooth_pricing_quote`, `tollbooth_wallet_balance`, `tollbooth_issue_receipt`, `tollbooth_verify_x402`). See our [Privacy Policy](https://redcenterstudio.com/privacy).
 - **Skills (`skills/`)**:
-  - `scan-routes`: Inventories Cloudflare Workers, Hono, Next.js App Router, and MCP routes and proposes dual-rail pricing tiers.
-  - `install-tollbooth`: Wires `@redcenterstudio/agent-tollbooth-edge` with replay-protected D1/memory nonce stores and placeholder env setup.
-  - `test-agent`: Executes a local `402` challenge -> signed payment -> `200 OK` retry -> nonce replay rejection smoke test.
-- **Scoped Guardrails (`rules/http-402-guardrails.md`)**: Automatically enforces CORS/health exemptions, constant-time Web Crypto verification, nonce replay protection, downstream `5xx` idempotency, integer microdollar accounting, and per-agent spend caps when working on monetization tasks.
+  - `scan-routes`: Audits Cloudflare Workers, Hono, Next.js App Router, Express, and MCP endpoints.
+  - `install-tollbooth`: Auto-detects framework, previews diff, and injects 1-step `withTollbooth(...)`.
+  - `test-agent`: Runs the 30-second zero-config sandbox `402 -> sign -> 200 OK` smoke test.
+- **Scoped Guardrails (`rules/http-402-guardrails.md`)**: Enforces bypass exemptions, constant-time Web Crypto checks, replay protection, downstream `5xx` idempotency, integer microdollar math, and spend caps.
 
 ---
 
-## Local Development, Validation & Reference Clearinghouse
+## Troubleshooting FAQ
 
-```bash
-npm install
-npm run validate
-```
+| Error Code | Meaning | Fix (`fix_hint`) |
+| :--- | :--- | :--- |
+| **`MISSING_PAYMENT`** | Request had neither `PAYMENT-SIGNATURE` nor `Bearer rcs_receipt_...`. | Attach an x402 V2 `PAYMENT-SIGNATURE` header, a Rail B receipt, or use `createSandboxReceipt()` in `mode: "sandbox"`. |
+| **`INSUFFICIENT_FUNDS`** | Payment authorization or wallet balance is below `priceMicros`. | Authorize at least `priceMicros` atomic units or top up the agent wallet balance. |
+| **`RECEIPT_EXPIRED`** | `exp` / `iat` / `validBefore` fell outside the `+/-30s` clock-skew window. | Re-sign a fresh receipt or x402 authorization using synchronized UTC seconds. |
+| **`NONCE_REPLAYED`** | The receipt `jti` or x402 `nonce` was already consumed in `used_nonces`. | Generate a new unique `crypto.randomUUID()` nonce/receipt for every new paid request. |
+| **`INVALID_SIGNATURE`** | Web Crypto HMAC/Ed25519 verification failed, or `aud` / `payTo` / `network` mismatched. | Confirm `RECEIPT_SIGNING_SECRET`, `ed25519PublicKey`, `payTo`, and target URL match. |
+| **Browser CORS blocked reading headers** | Browser client cannot read `PAYMENT-REQUIRED` or `PAYMENT-RESPONSE`. | Middleware automatically sets `Access-Control-Expose-Headers: PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-Agent-Receipt, WWW-Authenticate, X-Tollbooth-Rail`. |
 
-`npm run validate` runs:
-1. Strict TypeScript checks across `packages/edge-middleware` and `packages/clearinghouse-worker`.
-2. Build output for `@redcenterstudio/agent-tollbooth-edge`.
-3. Vitest suites covering `402` challenges, x402 V2 `exact` & Pro `upto` metering, HMAC-SHA256 & Ed25519 `<1ms` receipt verification, `D1NonceStore` replay prevention, 7% vs 3% integer ledger math, and Streamable HTTP `/mcp` JSON-RPC 2.0 handlers against an in-memory SQLite D1 adapter executing `migrations/0001_init.sql`.
-4. Strict plugin manifest, MCP config, skill frontmatter, and secret-hygiene validation (`scripts/validate-plugin.mjs`).
-
-> **Note on `packages/clearinghouse-worker`:** This is a reference Cloudflare Worker + D1 schema implementation (`wrangler.jsonc` uses placeholder IDs and `.dev.vars.example` contains placeholder secrets). Supply your own D1 database ID and Wrangler secrets before deploying to your own Cloudflare account.
+> **Reference Clearinghouse Note (`packages/clearinghouse-worker`):** Includes placeholder D1 IDs (`wrangler.jsonc`) and `.dev.vars.example` placeholders. Supply your own D1 database and Wrangler secrets before deploying to your own Cloudflare account.
 
 ---
 

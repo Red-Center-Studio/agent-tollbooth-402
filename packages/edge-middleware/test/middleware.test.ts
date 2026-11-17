@@ -4,6 +4,8 @@ import {
   D1NonceStore,
   MemoryNonceStore,
   MemorySpendTracker,
+  createSandboxReceipt,
+  createSandboxX402Header,
   decodePaymentHeader,
   encodePaymentHeader,
   honoTollbooth,
@@ -700,5 +702,219 @@ describe('withTollbooth dual-rail edge middleware', () => {
     });
     expect(ctx2.res?.status).toBe(402);
     expect(((await ctx2.res?.json()) as X402PaymentRequired).error).toBe('agent_spend_cap_exceeded');
+  });
+
+  it('negotiates HTML vs JSON on 402 responses with the Red Center Studio Industrial Palette', async () => {
+    const worker = withTollbooth(
+      {
+        priceUsd: 0.01,
+        mode: 'sandbox',
+      },
+      async () => Response.json({ ok: true }),
+    );
+
+    const jsonRes = await worker.fetch(
+      new Request('https://api.example.com/api/data', {
+        headers: { Accept: 'application/json' },
+      }),
+    );
+    expect(jsonRes.status).toBe(402);
+    expect(jsonRes.headers.get('Content-Type')).toContain('application/json');
+    const jsonBody = (await jsonRes.json()) as X402PaymentRequired;
+    expect(jsonBody).toMatchObject({
+      x402Version: 2,
+      code: 'MISSING_PAYMENT',
+      priceUsd: '0.01',
+      priceMicros: 10_000,
+    });
+    expect(jsonBody.fix_hint.length).toBeGreaterThan(10);
+
+    const htmlRes = await worker.fetch(
+      new Request('https://api.example.com/api/data', {
+        headers: { Accept: 'text/html,application/xhtml+xml' },
+      }),
+    );
+    expect(htmlRes.status).toBe(402);
+    expect(htmlRes.headers.get('Content-Type')).toContain('text/html');
+    expect(htmlRes.headers.get('PAYMENT-REQUIRED')).toBeTruthy();
+    const html = await htmlRes.text();
+    expect(html).toContain('#1F2937');
+    expect(html).toContain('#111827');
+    expect(html).toContain('#D97706');
+    expect(html).toContain('#10B981');
+    expect(html).toContain('#F9FAFB');
+    expect(html).toContain('#9CA3AF');
+    expect(html).toContain('Fund Agent Wallet');
+    expect(html).toContain('/api/data');
+  });
+
+  it('exposes PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-Agent-Receipt, and WWW-Authenticate via CORS headers', async () => {
+    const worker = withTollbooth(
+      {
+        priceUsd: 0.01,
+        mode: 'sandbox',
+      },
+      async (req) => {
+        if (req.method === 'OPTIONS') {
+          return new Response(null, { status: 405 });
+        }
+        return Response.json({ ok: true });
+      },
+    );
+
+    const preflight = await worker.fetch(
+      new Request('https://api.example.com/api/cors', { method: 'OPTIONS' }),
+    );
+    expect(preflight.status).toBe(204);
+    const preflightExpose = preflight.headers.get('Access-Control-Expose-Headers') ?? '';
+    expect(preflightExpose).toContain('PAYMENT-REQUIRED');
+    expect(preflightExpose).toContain('PAYMENT-RESPONSE');
+    expect(preflightExpose).toContain('X-Agent-Receipt');
+    expect(preflightExpose).toContain('WWW-Authenticate');
+
+    const unpaid = await worker.fetch(new Request('https://api.example.com/api/cors'));
+    expect(unpaid.status).toBe(402);
+    const unpaidExpose = unpaid.headers.get('Access-Control-Expose-Headers') ?? '';
+    expect(unpaidExpose).toContain('PAYMENT-REQUIRED');
+    expect(unpaidExpose).toContain('PAYMENT-RESPONSE');
+    expect(unpaidExpose).toContain('X-Agent-Receipt');
+    expect(unpaidExpose).toContain('WWW-Authenticate');
+    expect(unpaid.headers.get('WWW-Authenticate')).toContain('MISSING_PAYMENT');
+
+    const token = await createSandboxReceipt({ priceUsd: 0.01 });
+    const paid = await worker.fetch(
+      new Request('https://api.example.com/api/cors', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(paid.status).toBe(200);
+    const paidExpose = paid.headers.get('Access-Control-Expose-Headers') ?? '';
+    expect(paidExpose).toContain('PAYMENT-RESPONSE');
+    expect(paidExpose).toContain('X-Agent-Receipt');
+    expect(paidExpose).toContain('WWW-Authenticate');
+  });
+
+  it('honors 30-second clock-skew tolerance and returns actionable fix_hint on every error code', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const worker = withTollbooth(
+      {
+        payTo: PAY_TO,
+        priceUsd: 0.01,
+        nowSeconds: () => now,
+        fiatWallet: { hmacSecret: TEST_HMAC_SECRET },
+        routes: [{ pattern: '/api/skew', priceMicros: 10_000 }],
+      },
+      async () => Response.json({ ok: true }),
+    );
+
+    // 25s past exp (within +/-30s tolerance) -> 200 OK
+    const withinSkewToken = await signFiatReceipt(
+      {
+        v: 1,
+        jti: 'jti_skew_ok',
+        sub: 'wallet_skew',
+        aud: '*',
+        amt: 10_000,
+        iat: now + 20, // slightly ahead iat within 30s skew
+        exp: now - 25, // slightly expired within 30s skew
+      },
+      { alg: 'hs256', secret: TEST_HMAC_SECRET },
+    );
+    const skewOk = await worker.fetch(
+      new Request('https://api.example.com/api/skew', {
+        headers: { Authorization: `Bearer ${withinSkewToken}` },
+      }),
+    );
+    expect(skewOk.status).toBe(200);
+
+    // 45s past exp (beyond +/-30s tolerance) -> 402 RECEIPT_EXPIRED + fix_hint
+    const expiredToken = await signFiatReceipt(
+      {
+        v: 1,
+        jti: 'jti_skew_expired',
+        sub: 'wallet_skew',
+        aud: '*',
+        amt: 10_000,
+        iat: now - 120,
+        exp: now - 45,
+      },
+      { alg: 'hs256', secret: TEST_HMAC_SECRET },
+    );
+    const skewFail = await worker.fetch(
+      new Request('https://api.example.com/api/skew', {
+        headers: { Authorization: `Bearer ${expiredToken}` },
+      }),
+    );
+    expect(skewFail.status).toBe(402);
+    expect((await skewFail.json()) as X402PaymentRequired).toMatchObject({
+      code: 'RECEIPT_EXPIRED',
+      error: 'receipt_expired',
+    });
+
+    // Underpaid -> INSUFFICIENT_FUNDS
+    const underpaidToken = await signFiatReceipt(
+      {
+        v: 1,
+        jti: 'jti_underpaid',
+        sub: 'wallet_skew',
+        aud: '*',
+        amt: 1_000,
+        iat: now,
+        exp: now + 60,
+      },
+      { alg: 'hs256', secret: TEST_HMAC_SECRET },
+    );
+    const underRes = await worker.fetch(
+      new Request('https://api.example.com/api/skew', {
+        headers: { Authorization: `Bearer ${underpaidToken}` },
+      }),
+    );
+    const underJson = (await underRes.json()) as X402PaymentRequired;
+    expect(underJson.code).toBe('INSUFFICIENT_FUNDS');
+    expect(underJson.fix_hint).toContain('10000');
+
+    // Invalid signature -> INVALID_SIGNATURE
+    const badSigRes = await worker.fetch(
+      new Request('https://api.example.com/api/skew', {
+        headers: { Authorization: `Bearer ${withinSkewToken.slice(0, -4)}AAAA` },
+      }),
+    );
+    const badSigJson = (await badSigRes.json()) as X402PaymentRequired;
+    expect(badSigJson.code).toBe('INVALID_SIGNATURE');
+    expect(badSigJson.fix_hint.length).toBeGreaterThan(10);
+
+    // Replay -> NONCE_REPLAYED
+    const replayRes = await worker.fetch(
+      new Request('https://api.example.com/api/skew', {
+        headers: { Authorization: `Bearer ${withinSkewToken}` },
+      }),
+    );
+    const replayJson = (await replayRes.json()) as X402PaymentRequired;
+    expect(replayJson.code).toBe('NONCE_REPLAYED');
+    expect(replayJson.fix_hint).toContain('nonce');
+  });
+
+  it('supports zero-config sandbox mode for both Rail B and Rail A x402 flows without keys', async () => {
+    const app = withTollbooth({ priceUsd: 0.01, mode: 'sandbox' }, () =>
+      Response.json({ sandboxed: true }),
+    );
+
+    const receipt = await createSandboxReceipt({ priceUsd: 0.01 });
+    const railB = await app.fetch(
+      new Request('https://sandbox.local/anything', {
+        headers: { Authorization: `Bearer ${receipt}` },
+      }),
+    );
+    expect(railB.status).toBe(200);
+    expect(railB.headers.get('X-Tollbooth-Rail')).toBe('fiat_wallet');
+
+    const x402Sig = createSandboxX402Header({ priceUsd: 0.01 });
+    const railA = await app.fetch(
+      new Request('https://sandbox.local/anything', {
+        headers: { 'PAYMENT-SIGNATURE': x402Sig },
+      }),
+    );
+    expect(railA.status).toBe(200);
+    expect(railA.headers.get('X-Tollbooth-Rail')).toBe('x402');
   });
 });

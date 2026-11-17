@@ -1,131 +1,107 @@
 ---
 name: install-tollbooth
 description: >-
-  Injects zero-dependency dual-rail HTTP 402 middleware (x402 V2 + <1ms Red Center Fiat Agent
-  Wallet HMAC/Ed25519 receipt verification) into Cloudflare Workers, Hono apps, or MCP servers.
-  Use when the user invokes /install-tollbooth or asks to add HTTP 402 paywalls to endpoints.
+  Auto-detects Cloudflare Workers, Hono, Next.js App Router, or Express apps, previews a clean diff,
+  and injects zero-dependency dual-rail HTTP 402 middleware (x402 V2 + <1ms Red Center Fiat Agent
+  Wallet verification). Use when the user invokes /install-tollbooth or asks to monetize routes.
 ---
 
-# Install Agent Tollbooth 402 Middleware
+# Install Agent Tollbooth 402 Middleware (1-Step Setup)
 
-Wire dual-rail HTTP 402 monetization into a Cloudflare Worker, Hono application, or Streamable HTTP MCP server in under 60 seconds using `@redcenterstudio/agent-tollbooth-edge`.
+Wrap existing API or MCP routes with `@redcenterstudio/agent-tollbooth-edge` in a single `withTollbooth(...)` or `honoTollbooth(...)` call with safe defaults (`priceUsd: 0.01`, `mode: "hybrid"`).
 
-## Step 1: Confirm Target & Guardrails
+## Step 1: Auto-Detect Framework & Review Guardrails
 
-1. Review `rules/http-402-guardrails.md` before modifying any code.
-2. Identify the target runtime:
-   - **Cloudflare Worker** (`ExportedHandler.fetch`) -> use `withTollbooth(config, handler)`.
-   - **Hono App** -> use `honoTollbooth(config)`.
-   - **MCP Server (`/mcp`)** -> wrap `/mcp` or gate `tools/call` selectively while keeping `initialize` and `tools/list` free for agent discovery.
-3. Confirm exempt routes (`/health`, `/readyz`, `/webhook/*`, `OPTIONS`) are listed in `exemptPaths`.
+1. Review `rules/http-402-guardrails.md` before modifying any file.
+2. Inspect `package.json` and entrypoints to detect the user's framework automatically:
+   - **Cloudflare Workers (`wrangler.jsonc` / `export default { fetch }`)**: wrap the handler in `withTollbooth(...)`.
+   - **Hono (`"hono"` in dependencies / `new Hono()`)**: register `app.use("/api/*", honoTollbooth(...))`.
+   - **Next.js App Router (`app/api/**/route.ts`)**: wrap exported `GET`/`POST` Web Request handlers with `withTollbooth({ priceUsd: 0.01, mode: "hybrid" }, handler).fetch`.
+   - **Express (`"express"` in dependencies)**: bridge Express `req`/`res` to a Web `Request` passed into `withTollbooth(...).fetch(webReq)` and write back status, headers, and body.
+3. Confirm exempt routes (`/health`, `/readyz`, `/webhook/*`, `OPTIONS`) remain bypassable.
 
-## Step 2: Install or Vendor the Zero-Dependency Middleware
+## Step 2: Preview Diff or Create Backup Before Editing
 
-- From npm (when published): install `@redcenterstudio/agent-tollbooth-edge` (0 runtime dependencies, pure Web Standard `Request`/`Response` + `crypto.subtle`).
-- Inside this monorepo or offline workspace: depend on `"@redcenterstudio/agent-tollbooth-edge"` via workspace or copy `packages/edge-middleware/src/index.ts`.
+Before editing any existing route file:
+- Show the user a concise unified diff (or create a `.bak` backup if modifying files in place) clearly highlighting the exact `withTollbooth(...)` wrapper being added.
+- Never overwrite existing secret management, and never write real API keys or Stripe secrets into code.
 
-## Step 3: Wire Dual-Rail Configuration
+## Step 3: 1-Step Code Injection Templates
 
-### Option A: Cloudflare Worker (`withTollbooth`)
+### Cloudflare Workers (1-Step Default)
 
 ```ts
-import {
-  D1NonceStore,
-  usdToMicros,
-  withTollbooth,
-} from "@redcenterstudio/agent-tollbooth-edge";
+import { withTollbooth } from "@redcenterstudio/agent-tollbooth-edge";
 
-interface Env {
-  DB: D1Database;
-  TOLLBOOTH_PAY_TO_ADDRESS: string;
-  TOLLBOOTH_FACILITATOR_URL?: string;
-  RECEIPT_SIGNING_SECRET?: string;
-  RECEIPT_PUBLIC_KEY_ED25519?: string;
-}
-
-export default withTollbooth<Env>(
-  (env) => ({
-    payTo: env.TOLLBOOTH_PAY_TO_ADDRESS,
-    facilitatorUrl:
-      env.TOLLBOOTH_FACILITATOR_URL ?? "https://tollbooth.redcenterstudio.com",
-    network: "eip155:8453",
-    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    proPass: false, // Set true with Tollbooth Pro Pass ($39 / $79 Agency) for `upto` + 3% fee
-    exemptPaths: ["/health", "/readyz", "/webhook/*"],
-    nonceStore: new D1NonceStore(env.DB),
-    fiatWallet: {
-      hmacSecret: env.RECEIPT_SIGNING_SECRET,
-      ed25519PublicKey: env.RECEIPT_PUBLIC_KEY_ED25519,
-      clearinghouseUrl: "https://tollbooth.redcenterstudio.com",
-    },
-    routes: [
-      {
-        pattern: "/api/v1/lookup",
-        method: "GET",
-        scheme: "exact",
-        priceMicros: usdToMicros("0.005"), // $0.005 = 5,000 micros
-        description: "Premium data lookup",
-      },
-    ],
-  }),
-  {
-    async fetch(request, env, ctx) {
-      return Response.json({ ok: true, data: "Paid response" });
-    },
+export default withTollbooth(
+  { priceUsd: 0.01, mode: "hybrid", payTo: process.env.TOLLBOOTH_PAY_TO_ADDRESS },
+  async (request, env, ctx) => {
+    return Response.json({ ok: true, message: "Paid endpoint unlocked" });
   },
 );
 ```
 
-### Option B: Hono Middleware (`honoTollbooth`)
+### Hono
 
 ```ts
 import { Hono } from "hono";
-import {
-  MemoryNonceStore,
-  honoTollbooth,
-  usdToMicros,
-} from "@redcenterstudio/agent-tollbooth-edge";
+import { honoTollbooth } from "@redcenterstudio/agent-tollbooth-edge";
 
 const app = new Hono();
-const nonceStore = new MemoryNonceStore();
-
-app.use(
-  "/api/*",
-  honoTollbooth({
-    payTo: process.env.TOLLBOOTH_PAY_TO_ADDRESS ?? "0x000000000000000000000000000000000000dEaD",
-    facilitatorUrl: process.env.TOLLBOOTH_FACILITATOR_URL ?? "https://tollbooth.redcenterstudio.com",
-    nonceStore,
-    fiatWallet: {
-      hmacSecret: process.env.RECEIPT_SIGNING_SECRET,
-    },
-    routes: [
-      {
-        pattern: "/api/pro/summarize",
-        method: "POST",
-        scheme: "upto",
-        priceMicros: usdToMicros("0.05"),
-        proPass: true,
-        meterUsage: async (_req, res, minAtomic, maxAtomic) => {
-          const kb = BigInt(Math.max(1, Math.ceil((await res.clone().text()).length / 1024)));
-          const metered = minAtomic + kb * 500n;
-          return metered > maxAtomic ? maxAtomic : metered;
-        },
-      },
-    ],
-  }),
-);
+app.use("/api/*", honoTollbooth({ priceUsd: 0.01, mode: "hybrid" }));
 ```
 
-## Step 4: Configure Placeholder Env & D1 Nonce Table
+### Next.js App Router (`app/api/lookup/route.ts`)
 
-1. Ensure `.env.example` (never `.env`) documents placeholders only:
-   - `TOLLBOOTH_FACILITATOR_URL=https://tollbooth.redcenterstudio.com`
-   - `TOLLBOOTH_PAY_TO_ADDRESS=0x000000000000000000000000000000000000dEaD`
-   - `RECEIPT_SIGNING_SECRET=rcs_placeholder_hmac_secret_replace_in_production_32b`
-2. If using `D1NonceStore`, confirm the D1 database contains the `used_nonces` table from `packages/clearinghouse-worker/migrations/0001_init.sql`.
-3. **Never** write real API keys, Stripe secrets, or Cloudflare tokens into source or config files, and **never** run `wrangler deploy` automatically.
+```ts
+import { withTollbooth } from "@redcenterstudio/agent-tollbooth-edge";
 
-## Step 5: Verify Installation
+const gated = withTollbooth(
+  { priceUsd: 0.01, mode: "hybrid" },
+  async (request) => Response.json({ ok: true, url: request.url }),
+);
 
-1. Run TypeScript typechecking (`npm.cmd run typecheck` or `npx.cmd tsc --noEmit`).
-2. Run `/test-agent` (`skills/test-agent/SKILL.md`) locally to verify `402` challenge -> signed payment -> `200 OK` -> replay rejection (`402`).
+export const GET = (request: Request) => gated.fetch(request);
+```
+
+### Express Adapter
+
+```ts
+import express from "express";
+import { withTollbooth } from "@redcenterstudio/agent-tollbooth-edge";
+
+const gated = withTollbooth(
+  { priceUsd: 0.01, mode: "hybrid" },
+  async () => Response.json({ ok: true, data: "Paid Express payload" }),
+);
+
+const app = express();
+app.all("/api/*", async (req, res) => {
+  const webReq = new Request(`http://${req.headers.host ?? "localhost"}${req.originalUrl}`, {
+    method: req.method,
+    headers: req.headers as Record<string, string>,
+  });
+  const out = await gated.fetch(webReq);
+  res.status(out.status);
+  out.headers.forEach((v, k) => res.setHeader(k, v));
+  res.send(await out.text());
+});
+```
+
+## Step 4: Placeholder `.env.example` Setup
+
+Ensure `.env.example` (never `.env`) documents placeholders only:
+- `TOLLBOOTH_PAY_TO_ADDRESS=0x000000000000000000000000000000000000dEaD`
+- `TOLLBOOTH_FACILITATOR_URL=https://tollbooth.redcenterstudio.com`
+- `RECEIPT_SIGNING_SECRET=rcs_placeholder_hmac_secret_replace_in_production_32b`
+
+## Step 5: Verify & Print Uniform Status Table
+
+Run TypeScript validation (`npm.cmd run typecheck`) and `/test-agent` (`npm.cmd run test:sandbox`), then summarize using this exact table:
+
+| Check | Status | Details |
+| :--- | :--- | :--- |
+| Framework detection & diff | `[PASS]` | Wrapped target routes with `withTollbooth({ priceUsd: 0.01, mode: "hybrid" })` |
+| TypeScript & secret hygiene | `[PASS]` | `tsc --noEmit` passed; placeholders in `.env.example` only |
+| Local 402 smoke test | `[200 SETTLED]` | Verified `[402 CHALLENGE]` -> payment -> `[200 SETTLED]` via `/test-agent` |
+| Production keys (optional) | `[ACTION NEEDED]` | Set `TOLLBOOTH_PAY_TO_ADDRESS` & `RECEIPT_SIGNING_SECRET` before deploy |

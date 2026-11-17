@@ -623,9 +623,10 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       env,
       mockCtx,
     );
-    expect((await verifyAfter.json()) as { isValid: boolean; invalidReason: string }).toEqual({
+    expect((await verifyAfter.json()) as { isValid: boolean; invalidReason: string; code: string; fix_hint: string }).toMatchObject({
       isValid: false,
       invalidReason: 'nonce_already_used',
+      code: 'NONCE_REPLAYED',
     });
 
     // Edge-middleware integrated directly against clearinghouse worker over fetchImpl
@@ -763,5 +764,97 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       balanceMicros: 100_000,
       status: 'active',
     });
+  });
+
+  it('prevents concurrent double-spends on atomic wallet debits and honors 30s x402 clock skew', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const today = new Date(now * 1000).toISOString().slice(0, 10);
+
+    // Seed wallet with $0.10 (100,000 micros) balance & $0.20 daily cap
+    raw
+      .prepare(
+        'INSERT INTO agent_wallets (id, owner_label, balance_micros, daily_spend_cap_micros, daily_spent_micros, spend_window_day, stripe_customer_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run('wallet_race', 'Concurrent Agent', 100_000, 200_000, 0, today, 'cus_race', 'active', now, now);
+
+    // Fire two simultaneous $0.08 (80,000 micros) debit requests -> total 160k > 100k balance
+    const makeDebitReq = (idemKey: string) =>
+      worker.fetch(
+        new Request('https://tollbooth.redcenterstudio.com/wallet/issue-receipt', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.CLEARINGHOUSE_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idemKey,
+          },
+          body: JSON.stringify({
+            walletId: 'wallet_race',
+            developerId: 'dev_pro',
+            audience: 'https://api.example.com/api/race',
+            amountMicros: 80_000,
+          }),
+        }),
+        env,
+        mockCtx,
+      );
+
+    const [resA, resB] = await Promise.all([makeDebitReq('race_1'), makeDebitReq('race_2')]);
+    const statuses = [resA.status, resB.status].sort((a, b) => a - b);
+    expect(statuses).toEqual([200, 402]);
+
+    const failedResp = resA.status === 402 ? resA : resB;
+    const failedBody = (await failedResp.json()) as { code: string; fix_hint: string };
+    expect(failedBody.code).toBe('INSUFFICIENT_FUNDS');
+    expect(failedBody.fix_hint.length).toBeGreaterThan(10);
+
+    // Verify exact post-race balance in D1 is 20,000 micros (no negative or double debit)
+    const walletRow = raw
+      .prepare('SELECT balance_micros FROM agent_wallets WHERE id = ?')
+      .get('wallet_race') as { balance_micros: number };
+    expect(walletRow.balance_micros).toBe(20_000);
+
+    // Verify 30-second clock skew tolerance on /verify
+    const skewedX402: X402PaymentSignature = {
+      x402Version: 2,
+      scheme: 'exact',
+      network: 'eip155:8453',
+      accepted: { scheme: 'exact', network: 'eip155:8453' },
+      payload: {
+        signature: '0x' + 'ab'.repeat(65),
+        authorization: {
+          from: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          to: '0x2222222222222222222222222222222222222222',
+          value: '10000',
+          validAfter: String(now + 20), // 20s ahead (within 30s skew)
+          validBefore: String(now - 20), // 20s expired (within 30s skew)
+          nonce: `0x${'77'.repeat(16)}`,
+        },
+      },
+    };
+    const skewVerify = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          x402Version: 2,
+          paymentPayload: skewedX402,
+          paymentRequirements: {
+            scheme: 'exact',
+            network: 'eip155:8453',
+            amount: '10000',
+            asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            payTo: '0x2222222222222222222222222222222222222222',
+          },
+        }),
+      }),
+      env,
+      mockCtx,
+    );
+    expect(skewVerify.status).toBe(200);
+    expect((await skewVerify.json()) as { isValid: boolean }).toEqual({
+      isValid: true,
+      invalidReason: null,
+    });
+    expect(skewVerify.headers.get('Access-Control-Expose-Headers')).toContain('PAYMENT-REQUIRED');
   });
 });

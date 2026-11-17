@@ -1,56 +1,77 @@
 ---
 name: test-agent
 description: >-
-  Runs a local HTTP 402 challenge, receipt signing or x402 signature simulation, 200 OK retry,
-  and nonce replay rejection smoke test. Use when the user invokes /test-agent or wants to
-  verify 402 tollbooth endpoints locally without hitting live blockchains or production Stripe.
+  Runs an instant 30-second local HTTP 402 challenge, sandbox receipt signing or x402 simulation,
+  200 OK retry, HTML checkout card check, and nonce replay rejection smoke test with zero API keys,
+  zero crypto wallets, and zero Stripe setup. Use when the user invokes /test-agent.
 ---
 
-# Test Agent — Local HTTP 402 Challenge & Retry Smoke Test
+# Test Agent — 30-Second Zero-Config HTTP 402 Smoke Test
 
-Validate a dual-rail HTTP 402 endpoint entirely in memory or against a local dev server without touching live blockchains, live Stripe accounts, or deployed Cloudflare infrastructure.
+Verify any gated endpoint locally in under 30 seconds with **zero API keys, zero crypto wallets, and zero Stripe setup** using `mode: "sandbox"` (or `mode: "mock"`).
 
-## Smoke Test Matrix
+## Option A: Instant 1-Command Sandbox Smoke Test
 
-Every monetized endpoint MUST pass all four assertions:
+Run the bundled sandbox smoke runner from the plugin repository root:
 
-1. **Unpaid Request -> `402 Payment Required` + Valid `PAYMENT-REQUIRED` Header**
-   - Send request with no `PAYMENT-SIGNATURE`, `Authorization: Bearer rcs_receipt_...`, or `X-Agent-Receipt`.
-   - Assert HTTP `402`.
-   - Base64-decode the `PAYMENT-REQUIRED` header and verify JSON matches x402 V2:
-     - `x402Version === 2`
-     - `accepts` is a non-empty array containing `scheme` (`"exact"` or `"upto"`), `network`, `amount`, `asset`, `payTo`
-     - `extensions.fiatAgentWallet` advertises `clearinghouseUrl` and accepted headers when Rail B is enabled.
-2. **Rail B (Fiat Agent Wallet Receipt) -> `<1ms` Verification -> `200 OK`**
-   - Sign a short-lived (`exp = now + 120`) test receipt via `signFiatReceipt(...)` from `@redcenterstudio/agent-tollbooth-edge` using a local test secret (`rcs_test_secret_not_for_prod`) or ephemeral Ed25519 key pair.
-   - Retry request with `Authorization: Bearer rcs_receipt_hs256...` (or `X-Agent-Receipt`).
-   - Assert HTTP `200` and Base64-decode `PAYMENT-RESPONSE` (`success === true`, `network === "rcs:fiat-wallet"`, `transaction === claims.jti`).
-3. **Nonce Replay Attempt -> `402 Payment Required` (`nonce_replayed`)**
-   - Re-send the **exact same** `rcs_receipt_...` header to the same endpoint.
-   - Assert HTTP `402` and error reason `"nonce_replayed"`.
-4. **Rail A (Open x402 V2 Signature) -> `/verify` -> `200 OK` -> `/settle`**
-   - Encode an x402 V2 `PAYMENT-SIGNATURE` header with valid `validAfter`, `validBefore`, `to === payTo`, `value >= requiredAmount`, and unique `nonce`.
-   - Mock or point `facilitatorUrl` to a local instance of `packages/clearinghouse-worker`.
-   - Assert `/verify` returns `{ isValid: true }`, downstream handler runs once, `/settle` returns `{ success: true, txHash }`, and final HTTP response includes Base64 `PAYMENT-RESPONSE`.
+```bash
+npm run test:sandbox
+```
 
-## Running the Local Smoke Suites
+This tests the complete loop entirely in memory (`createSandboxReceipt` + `createSandboxX402Header` + HTML content negotiation + nonce replay blocking) and outputs a scannable status table.
 
-From the repository root (`agent-tollbooth-402/`), run the Vitest suites covering both the edge middleware and the reference clearinghouse worker:
+## Option B: Zero-Config Programmatic Smoke Test
+
+```ts
+import {
+  createSandboxReceipt,
+  decodePaymentHeader,
+  withTollbooth,
+} from "@redcenterstudio/agent-tollbooth-edge";
+
+const app = withTollbooth({ priceUsd: 0.01, mode: "sandbox" }, () =>
+  Response.json({ ok: true, secretData: "Unlocked!" }),
+);
+
+// 1. Unpaid request -> 402 Payment Required + actionable fix_hint
+const unpaid = await app.fetch(new Request("https://sandbox.local/api/data"));
+// unpaid.status === 402, JSON includes code: "MISSING_PAYMENT" and fix_hint
+
+// 2. Sign a zero-config sandbox receipt & retry -> 200 OK + PAYMENT-RESPONSE
+const token = await createSandboxReceipt({ priceUsd: 0.01 });
+const paid = await app.fetch(
+  new Request("https://sandbox.local/api/data", {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
+);
+// paid.status === 200, decodePaymentHeader(paid.headers.get("PAYMENT-RESPONSE"))
+
+// 3. Replay exact same token -> 402 NONCE_REPLAYED
+const replay = await app.fetch(
+  new Request("https://sandbox.local/api/data", {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
+);
+// replay.status === 402, JSON includes code: "NONCE_REPLAYED" and fix_hint
+```
+
+## Full Vitest Suite
+
+Run both the edge middleware and clearinghouse D1 worker test suites:
 
 ```bash
 npm test
 ```
 
-Or run targeted checks:
+## Uniform Output Table Format
 
-```bash
-npx vitest run packages/edge-middleware/test/middleware.test.ts
-npx vitest run packages/clearinghouse-worker/test/worker.test.ts
-```
+Report results to the user using these exact standardized status badges:
 
-## Interpreting Failures
-
-- **Missing `PAYMENT-REQUIRED` on `402`**: Verify the route pattern matches `routes[]` and is not shadowed by `exemptPaths`.
-- **`nonce_replayed` on first attempt**: Ensure `MemoryNonceStore` or `D1NonceStore` receives a fresh `crypto.randomUUID()` `jti` / `nonce` per logical request.
-- **`pro_pass_required_for_upto`**: Enable `proPass: true` on the middleware config or `tier = 'pro' | 'agency'` on the developer record in D1.
-- **`5xx` Downstream Error**: Confirm neither `/settle` nor permanent wallet debit persisted so the agent can safely retry.
+| Step | Status | Details |
+| :--- | :--- | :--- |
+| 1. Unpaid JSON request | `[402 CHALLENGE]` | `HTTP 402` + Base64 `PAYMENT-REQUIRED` + `code=MISSING_PAYMENT` + `fix_hint` |
+| 2. Browser `Accept: text/html` | `[PASS]` | Self-contained `#1F2937` / `#D97706` / `#10B981` 402 Checkout Card rendered |
+| 3. Rail B Sandbox Receipt | `[200 SETTLED]` | `HTTP 200` + Base64 `PAYMENT-RESPONSE` (`<1ms` Web Crypto verification) |
+| 4. Nonce Replay Attempt | `[PASS]` | `HTTP 402` blocked with `NONCE_REPLAYED` and plain-English `fix_hint` |
+| 5. Rail A x402 V2 Flow | `[200 SETTLED]` | `/verify` -> handler -> `/settle` -> `HTTP 200` + `PAYMENT-RESPONSE` |
+| Missing/expired configuration | `[ACTION NEEDED]` | Follow `fix_hint` in the JSON body or set `mode: "sandbox"` |

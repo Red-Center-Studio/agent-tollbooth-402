@@ -1,4 +1,7 @@
 import {
+  CORS_ALLOW_HEADERS,
+  CORS_EXPOSE_HEADERS,
+  DEFAULT_CLOCK_SKEW_SECONDS,
   signFiatReceipt,
   type PaymentScheme,
   type RcsReceiptClaims,
@@ -81,6 +84,92 @@ interface ExistingLedgerRow {
 }
 
 const textEncoder = new TextEncoder();
+
+function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint: string } {
+  switch (reason) {
+    case 'unauthorized':
+      return {
+        code: 'INVALID_SIGNATURE',
+        fix_hint: 'Supply a valid Authorization: Bearer <CLEARINGHOUSE_API_KEY> header.',
+      };
+    case 'insufficient_wallet_balance':
+    case 'insufficient_balance_or_cap_exceeded':
+    case 'insufficient_authorized_amount':
+      return {
+        code: 'INSUFFICIENT_FUNDS',
+        fix_hint: 'Top up the agent wallet balance or authorize an amount >= required payment.',
+      };
+    case 'daily_spend_cap_exceeded':
+      return {
+        code: 'SPEND_CAP_EXCEEDED',
+        fix_hint: 'Agent wallet reached its UTC daily_spend_cap_micros limit; increase cap or wait for next UTC day.',
+      };
+    case 'authorization_expired':
+      return {
+        code: 'RECEIPT_EXPIRED',
+        fix_hint: 'Authorization validAfter/validBefore window fell outside +/-30s clock skew; re-sign with current timestamps.',
+      };
+    case 'nonce_already_used':
+    case 'nonce_replayed':
+      return {
+        code: 'NONCE_REPLAYED',
+        fix_hint: 'This authorization nonce was already settled. Generate a fresh nonce and retry.',
+      };
+    case 'pro_pass_required_for_upto':
+      return {
+        code: 'PRO_PASS_REQUIRED',
+        fix_hint: 'Upgrade developer tier to pro or agency to enable the metered upto scheme.',
+      };
+    case 'wallet_frozen':
+      return {
+        code: 'WALLET_FROZEN',
+        fix_hint: 'Reactivate the agent wallet status before issuing receipts.',
+      };
+    case 'developer_not_found':
+    case 'wallet_not_found':
+      return {
+        code: 'NOT_FOUND',
+        fix_hint: 'Verify the developerId / walletId exists in the clearinghouse D1 database.',
+      };
+    case 'signature_mismatch':
+    case 'missing_signature':
+    case 'malformed_hmac_signature':
+    case 'malformed_evm_signature':
+    case 'recipient_mismatch':
+    case 'network_mismatch':
+    case 'scheme_mismatch':
+    case 'malformed_authorization':
+    case 'unsupported_x402_version':
+    case 'invalid_x402_request':
+      return {
+        code: 'INVALID_SIGNATURE',
+        fix_hint: `Verify x402 V2 signature, network, payTo, and scheme (${reason}).`,
+      };
+    default:
+      return {
+        code: 'INVALID_REQUEST',
+        fix_hint: `Check request fields and try again (${reason}).`,
+      };
+  }
+}
+
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  headers.set('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
+  if (!headers.has('Access-Control-Allow-Methods')) {
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function jsonWithCors(payload: unknown, status = 200): Response {
+  return withCors(Response.json(payload, { status }));
+}
 
 /**
  * Exact integer fee math (no floating-point currency calculations).
@@ -269,7 +358,8 @@ async function verifyX402Payload(
   const now = Math.floor(Date.now() / 1000);
   const validAfter = Number(auth.validAfter);
   const validBefore = Number(auth.validBefore);
-  if (now < validAfter || now > validBefore) {
+  const clockSkew = DEFAULT_CLOCK_SKEW_SECONDS;
+  if (now < validAfter - clockSkew || now > validBefore + clockSkew) {
     return { isValid: false, invalidReason: 'authorization_expired' };
   }
 
@@ -307,13 +397,26 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
   try {
     body = (await request.json()) as FacilitatorRequestBody;
   } catch {
-    return Response.json({ isValid: false, invalidReason: 'invalid_json' }, { status: 400 });
+    const g = resolveClearinghouseGuidance('invalid_json');
+    return jsonWithCors(
+      { isValid: false, invalidReason: 'invalid_json', ...g },
+      400,
+    );
   }
 
   const result = await verifyX402Payload(body, env);
-  return Response.json({
-    isValid: result.isValid,
+  if (result.isValid) {
+    return jsonWithCors({
+      isValid: true,
+      invalidReason: null,
+    });
+  }
+
+  const g = resolveClearinghouseGuidance(result.invalidReason ?? 'invalid_x402_request');
+  return jsonWithCors({
+    isValid: false,
     invalidReason: result.invalidReason,
+    ...g,
   });
 }
 
@@ -322,9 +425,14 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
   try {
     body = (await request.json()) as FacilitatorRequestBody;
   } catch {
-    return Response.json(
-      { success: false, txHash: null, errorReason: 'invalid_json' },
-      { status: 400 },
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'invalid_json',
+        ...resolveClearinghouseGuidance('invalid_json'),
+      },
+      400,
     );
   }
 
@@ -341,7 +449,7 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     const meta = existing.metadata_json
       ? (JSON.parse(existing.metadata_json) as { network?: string })
       : {};
-    return Response.json({
+    return jsonWithCors({
       success: true,
       txHash: existing.tx_reference,
       network: meta.network ?? body.paymentRequirements?.network ?? 'eip155:8453',
@@ -355,17 +463,19 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
 
   const verification = await verifyX402Payload(body, env);
   if (!verification.isValid) {
-    const status = verification.invalidReason === 'nonce_already_used' ? 409 : 400;
-    return Response.json(
+    const reason =
+      verification.invalidReason === 'nonce_already_used'
+        ? 'nonce_replayed'
+        : (verification.invalidReason ?? 'invalid_x402_request');
+    const status = reason === 'nonce_replayed' ? 409 : 400;
+    return jsonWithCors(
       {
         success: false,
         txHash: null,
-        errorReason:
-          verification.invalidReason === 'nonce_already_used'
-            ? 'nonce_replayed'
-            : verification.invalidReason,
+        errorReason: reason,
+        ...resolveClearinghouseGuidance(reason),
       },
-      { status },
+      status,
     );
   }
 
@@ -377,25 +487,40 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
   if (req.scheme === 'upto') {
     const requestedSettle = body.settleAmount ?? req.amount;
     if (!/^\d+$/.test(requestedSettle)) {
-      return Response.json(
-        { success: false, txHash: null, errorReason: 'invalid_settle_amount' },
-        { status: 400 },
+      return jsonWithCors(
+        {
+          success: false,
+          txHash: null,
+          errorReason: 'invalid_settle_amount',
+          ...resolveClearinghouseGuidance('invalid_settle_amount'),
+        },
+        400,
       );
     }
     settleBig = BigInt(requestedSettle);
     if (settleBig > authorizedBig) {
-      return Response.json(
-        { success: false, txHash: null, errorReason: 'settle_amount_exceeds_authorization' },
-        { status: 400 },
+      return jsonWithCors(
+        {
+          success: false,
+          txHash: null,
+          errorReason: 'settle_amount_exceeds_authorization',
+          ...resolveClearinghouseGuidance('settle_amount_exceeds_authorization'),
+        },
+        400,
       );
     }
   }
 
   const grossMicros = Number(settleBig);
   if (!Number.isSafeInteger(grossMicros) || grossMicros < 0) {
-    return Response.json(
-      { success: false, txHash: null, errorReason: 'settle_amount_out_of_range' },
-      { status: 400 },
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'settle_amount_out_of_range',
+        ...resolveClearinghouseGuidance('settle_amount_out_of_range'),
+      },
+      400,
     );
   }
 
@@ -414,9 +539,14 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     .run();
 
   if ((consumeResult.meta?.changes ?? 0) !== 1) {
-    return Response.json(
-      { success: false, txHash: null, errorReason: 'nonce_replayed' },
-      { status: 409 },
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'nonce_replayed',
+        ...resolveClearinghouseGuidance('nonce_replayed'),
+      },
+      409,
     );
   }
 
@@ -443,7 +573,7 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     )
     .run();
 
-  return Response.json({
+  return jsonWithCors({
     success: true,
     txHash,
     network: req.network,
@@ -466,7 +596,13 @@ async function issueWalletReceiptInternal(
     !Number.isSafeInteger(body.amountMicros) ||
     body.amountMicros <= 0
   ) {
-    return { status: 400, payload: { error: 'invalid_issue_receipt_request' } };
+    return {
+      status: 400,
+      payload: {
+        error: 'invalid_issue_receipt_request',
+        ...resolveClearinghouseGuidance('invalid_issue_receipt_request'),
+      },
+    };
   }
 
   const existing = await env.DB.prepare(
@@ -493,15 +629,33 @@ async function issueWalletReceiptInternal(
     .first<DeveloperRow>();
 
   if (!developer) {
-    return { status: 404, payload: { error: 'developer_not_found' } };
+    return {
+      status: 404,
+      payload: {
+        error: 'developer_not_found',
+        ...resolveClearinghouseGuidance('developer_not_found'),
+      },
+    };
   }
   if (developer.tier === 'free') {
-    return { status: 403, payload: { error: 'fiat_wallet_requires_hybrid_or_pro' } };
+    return {
+      status: 403,
+      payload: {
+        error: 'fiat_wallet_requires_hybrid_or_pro',
+        ...resolveClearinghouseGuidance('fiat_wallet_requires_hybrid_or_pro'),
+      },
+    };
   }
 
   const scheme: PaymentScheme = body.scheme ?? 'exact';
   if (scheme === 'upto' && developer.tier !== 'pro' && developer.tier !== 'agency') {
-    return { status: 403, payload: { error: 'pro_pass_required_for_upto' } };
+    return {
+      status: 403,
+      payload: {
+        error: 'pro_pass_required_for_upto',
+        ...resolveClearinghouseGuidance('pro_pass_required_for_upto'),
+      },
+    };
   }
 
   const wallet = await env.DB.prepare(
@@ -511,10 +665,22 @@ async function issueWalletReceiptInternal(
     .first<WalletRow>();
 
   if (!wallet) {
-    return { status: 404, payload: { error: 'wallet_not_found' } };
+    return {
+      status: 404,
+      payload: {
+        error: 'wallet_not_found',
+        ...resolveClearinghouseGuidance('wallet_not_found'),
+      },
+    };
   }
   if (wallet.status !== 'active') {
-    return { status: 403, payload: { error: 'wallet_frozen' } };
+    return {
+      status: 403,
+      payload: {
+        error: 'wallet_frozen',
+        ...resolveClearinghouseGuidance('wallet_frozen'),
+      },
+    };
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -522,10 +688,22 @@ async function issueWalletReceiptInternal(
   const spentToday = wallet.spend_window_day === today ? wallet.daily_spent_micros : 0;
 
   if (spentToday + body.amountMicros > wallet.daily_spend_cap_micros) {
-    return { status: 402, payload: { error: 'daily_spend_cap_exceeded' } };
+    return {
+      status: 402,
+      payload: {
+        error: 'daily_spend_cap_exceeded',
+        ...resolveClearinghouseGuidance('daily_spend_cap_exceeded'),
+      },
+    };
   }
   if (wallet.balance_micros < body.amountMicros) {
-    return { status: 402, payload: { error: 'insufficient_wallet_balance' } };
+    return {
+      status: 402,
+      payload: {
+        error: 'insufficient_wallet_balance',
+        ...resolveClearinghouseGuidance('insufficient_wallet_balance'),
+      },
+    };
   }
 
   const feeBreakdown = calculateClearinghouseFee(body.amountMicros, developer.tier, 'fiat_wallet');
@@ -573,10 +751,23 @@ async function issueWalletReceiptInternal(
     .run();
 
   if ((debitRes.meta?.changes ?? 0) !== 1) {
-    return { status: 402, payload: { error: 'insufficient_balance_or_cap_exceeded' } };
+    return {
+      status: 402,
+      payload: {
+        error: 'insufficient_balance_or_cap_exceeded',
+        ...resolveClearinghouseGuidance('insufficient_balance_or_cap_exceeded'),
+      },
+    };
   }
 
-  const remainingBalanceMicros = wallet.balance_micros - body.amountMicros;
+  const updatedWallet = await env.DB.prepare(
+    'SELECT balance_micros FROM agent_wallets WHERE id = ? LIMIT 1',
+  )
+    .bind(wallet.id)
+    .first<{ balance_micros: number }>();
+
+  const remainingBalanceMicros =
+    updatedWallet?.balance_micros ?? wallet.balance_micros - body.amountMicros;
   const responsePayload = {
     receipt,
     claims,
@@ -584,45 +775,92 @@ async function issueWalletReceiptInternal(
     feeBreakdown,
   };
 
-  await env.DB.prepare(
-    'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  )
-    .bind(
-      `led_${crypto.randomUUID()}`,
-      idempotencyKey,
-      wallet.id,
-      developer.id,
-      body.routeId ?? null,
-      'fiat_wallet',
-      'charge',
-      feeBreakdown.grossMicros,
-      feeBreakdown.feeBps,
-      feeBreakdown.platformFeeMicros,
-      feeBreakdown.developerNetMicros,
-      claims.jti,
-      JSON.stringify(responsePayload),
-      now,
+  try {
+    await env.DB.prepare(
+      'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run();
+      .bind(
+        `led_${crypto.randomUUID()}`,
+        idempotencyKey,
+        wallet.id,
+        developer.id,
+        body.routeId ?? null,
+        'fiat_wallet',
+        'charge',
+        feeBreakdown.grossMicros,
+        feeBreakdown.feeBps,
+        feeBreakdown.platformFeeMicros,
+        feeBreakdown.developerNetMicros,
+        claims.jti,
+        JSON.stringify(responsePayload),
+        now,
+      )
+      .run();
+  } catch {
+    // Concurrent duplicate idempotency_key lost the INSERT race: roll back the duplicate debit.
+    await env.DB.prepare(
+      `UPDATE agent_wallets
+       SET balance_micros = balance_micros + ?,
+           daily_spent_micros = MAX(0, daily_spent_micros - ?),
+           updated_at = ?
+       WHERE id = ?`,
+    )
+      .bind(body.amountMicros, body.amountMicros, now, wallet.id)
+      .run();
+
+    const winner = await env.DB.prepare(
+      'SELECT metadata_json FROM ledger_entries WHERE idempotency_key = ? LIMIT 1',
+    )
+      .bind(idempotencyKey)
+      .first<{ metadata_json: string | null }>();
+    if (winner?.metadata_json) {
+      return {
+        status: 200,
+        payload: {
+          ...(JSON.parse(winner.metadata_json) as Record<string, unknown>),
+          idempotentReplay: true,
+        },
+      };
+    }
+    return {
+      status: 409,
+      payload: {
+        error: 'idempotency_conflict',
+        ...resolveClearinghouseGuidance('idempotency_conflict'),
+      },
+    };
+  }
 
   return { status: 200, payload: responsePayload };
 }
 
 async function handleIssueReceipt(request: Request, env: Env): Promise<Response> {
   if (!(await isAuthorizedAdminRequest(request, env))) {
-    return Response.json({ error: 'unauthorized' }, { status: 401 });
+    return jsonWithCors(
+      {
+        error: 'unauthorized',
+        ...resolveClearinghouseGuidance('unauthorized'),
+      },
+      401,
+    );
   }
 
   let body: IssueReceiptBody;
   try {
     body = (await request.json()) as IssueReceiptBody;
   } catch {
-    return Response.json({ error: 'invalid_json' }, { status: 400 });
+    return jsonWithCors(
+      {
+        error: 'invalid_json',
+        ...resolveClearinghouseGuidance('invalid_json'),
+      },
+      400,
+    );
   }
 
   const idempotencyKey = request.headers.get('Idempotency-Key') ?? `rcpt_${crypto.randomUUID()}`;
   const result = await issueWalletReceiptInternal(body, idempotencyKey, env);
-  return Response.json(result.payload, { status: result.status });
+  return jsonWithCors(result.payload, result.status);
 }
 
 interface JsonRpcRequest {
@@ -691,7 +929,7 @@ const MCP_TOOLS = [
 ] as const;
 
 function jsonRpcOk(id: string | number | null | undefined, result: unknown): Response {
-  return Response.json({
+  return jsonWithCors({
     jsonrpc: '2.0',
     id: id ?? null,
     result,
@@ -704,19 +942,19 @@ function jsonRpcErr(
   message: string,
   status = 200,
 ): Response {
-  return Response.json(
+  return jsonWithCors(
     {
       jsonrpc: '2.0',
       id: id ?? null,
       error: { code, message },
     },
-    { status },
+    status,
   );
 }
 
 async function handleMcp(request: Request, env: Env): Promise<Response> {
   if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204 });
+    return withCors(new Response(null, { status: 204 }));
   }
   if (request.method !== 'POST') {
     return jsonRpcErr(null, -32600, 'Method Not Allowed: use POST for Streamable HTTP MCP', 405);
@@ -734,7 +972,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
   }
 
   if (rpc.method === 'notifications/initialized') {
-    return new Response(null, { status: 202 });
+    return withCors(new Response(null, { status: 202 }));
   }
 
   if (rpc.method === 'ping') {
@@ -855,33 +1093,55 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    if (request.method === 'GET' && url.pathname === '/health') {
-      return Response.json({
-        status: 'ok',
-        service: 'agent-tollbooth-402-clearinghouse',
-        version: '1.0.0',
-        timestamp: Math.floor(Date.now() / 1000),
-      });
+      if (request.method === 'OPTIONS') {
+        return withCors(new Response(null, { status: 204 }));
+      }
+
+      if (request.method === 'GET' && url.pathname === '/health') {
+        return jsonWithCors({
+          status: 'ok',
+          service: 'agent-tollbooth-402-clearinghouse',
+          version: '1.0.0',
+          timestamp: Math.floor(Date.now() / 1000),
+        });
+      }
+
+      if (url.pathname === '/mcp') {
+        return handleMcp(request, env);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/verify') {
+        return handleVerify(request, env);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/settle') {
+        return handleSettle(request, env);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/wallet/issue-receipt') {
+        return handleIssueReceipt(request, env);
+      }
+
+      return jsonWithCors(
+        {
+          error: 'not_found',
+          code: 'NOT_FOUND',
+          fix_hint: 'Supported routes: GET /health, POST /verify, POST /settle, POST /wallet/issue-receipt, POST /mcp.',
+        },
+        404,
+      );
+    } catch {
+      return jsonWithCors(
+        {
+          error: 'internal_error',
+          code: 'INTERNAL_ERROR',
+          fix_hint: 'An internal clearinghouse error occurred. Retry safely with the same Idempotency-Key.',
+        },
+        500,
+      );
     }
-
-    if (url.pathname === '/mcp') {
-      return handleMcp(request, env);
-    }
-
-    if (request.method === 'POST' && url.pathname === '/verify') {
-      return handleVerify(request, env);
-    }
-
-    if (request.method === 'POST' && url.pathname === '/settle') {
-      return handleSettle(request, env);
-    }
-
-    if (request.method === 'POST' && url.pathname === '/wallet/issue-receipt') {
-      return handleIssueReceipt(request, env);
-    }
-
-    return Response.json({ error: 'not_found' }, { status: 404 });
   },
 };
