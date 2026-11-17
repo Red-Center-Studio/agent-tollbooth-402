@@ -1,0 +1,25 @@
+// REFERENCE CONFIGURATION ONLY — NEVER RUN wrangler deploy AGAINST LIVE INFRASTRUCTURE
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/configuration/schema.json",
+  "name": "agent-tollbooth-402-clearinghouse",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-17",
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
+  },
+  "vars": {
+    "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pro",
+    "ENVIRONMENT": "reference-local"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tollbooth-clearinghouse-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

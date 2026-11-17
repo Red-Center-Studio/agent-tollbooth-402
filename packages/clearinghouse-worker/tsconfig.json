@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"],
+    "paths": {
+      "@redcenterstudio/agent-tollbooth-edge": ["../edge-middleware/src/index.ts"]
+    },
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

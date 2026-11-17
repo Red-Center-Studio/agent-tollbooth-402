@@ -1,0 +1,22 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "agent-tollbooth-402",
+  "displayName": "Agent Tollbooth 402",
+  "version": "1.0.0",
+  "description": "Monetize APIs, Cloudflare Workers, Hono apps, and MCP servers in under 60 seconds with dual-rail HTTP 402 (open x402 V2 + <1ms Red Center Fiat Agent Wallet receipts).",
+  "author": {
+    "name": "Red Center Studio",
+    "url": "https://redcenterstudio.com"
+  },
+  "homepage": "https://tollbooth.redcenterstudio.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/redcenterstudio/agent-tollbooth-402"
+  },
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Scan my API and MCP routes and propose HTTP 402 pricing tiers",
+    "Install dual-rail 402 tollbooth middleware on my Cloudflare Worker or Hono app",
+    "Run a local 402 challenge, receipt signing, and 200 OK retry smoke test"
+  ]
+}

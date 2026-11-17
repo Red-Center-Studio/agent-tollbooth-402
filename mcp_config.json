@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "agent-tollbooth-402": {
+      "url": "https://tollbooth.redcenterstudio.com/mcp"
+    }
+  }
+}

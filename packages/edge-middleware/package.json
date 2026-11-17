@@ -1,0 +1,32 @@
+{
+  "name": "@redcenterstudio/agent-tollbooth-edge",
+  "version": "1.0.0",
+  "description": "Zero-dependency dual-rail HTTP 402 middleware (x402 V2 + <1ms Red Center Fiat Agent Wallet verification) for Cloudflare Workers and Hono.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "peerDependencies": {
+    "hono": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}

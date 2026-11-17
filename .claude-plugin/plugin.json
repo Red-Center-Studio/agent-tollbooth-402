@@ -1,0 +1,23 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agent-tollbooth-402",
+  "version": "1.0.0",
+  "description": "Monetize APIs, Cloudflare Workers, Hono apps, and MCP servers in under 60 seconds with dual-rail HTTP 402 (open x402 V2 + <1ms Red Center Fiat Agent Wallet receipts).",
+  "author": {
+    "name": "Red Center Studio",
+    "url": "https://redcenterstudio.com"
+  },
+  "homepage": "https://tollbooth.redcenterstudio.com",
+  "privacyPolicyUrl": "https://redcenterstudio.com/privacy",
+  "repository": "https://github.com/redcenterstudio/agent-tollbooth-402",
+  "license": "MIT",
+  "keywords": [
+    "http-402",
+    "x402",
+    "mcp",
+    "monetization",
+    "cloudflare-workers",
+    "agent-wallet",
+    "hono"
+  ]
+}

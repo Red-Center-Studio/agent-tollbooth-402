@@ -1,0 +1,22 @@
+{
+  "name": "agent-tollbooth-402-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm --workspace=packages/edge-middleware run build",
+    "typecheck": "npm --workspace=packages/edge-middleware run typecheck && npm --workspace=packages/clearinghouse-worker run typecheck",
+    "test": "vitest run",
+    "validate:plugin": "node scripts/validate-plugin.mjs",
+    "validate": "npm run typecheck && npm run build && npm test && npm run validate:plugin"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250310.0",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.8"
+  }
+}
