@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import worker, { calculateClearinghouseFee, type Env } from '../src/index.js';
+import worker, {
+  calculateClearinghouseFee,
+  signStripeWebhookPayload,
+  type Env,
+} from '../src/index.js';
 import {
   D1NonceStore,
   encodePaymentHeader,
@@ -21,6 +25,7 @@ const TEST_ENV_SECRETS = {
   RECEIPT_SIGNING_SECRET: 'rcs_test_hmac_secret_value_not_for_production',
   CLEARINGHOUSE_API_KEY: 'rcs_test_clearinghouse_api_key_placeholder',
   FACILITATOR_HMAC_SECRET: 'rcs_test_facilitator_hmac_secret_placeholder',
+  STRIPE_CONNECT_WEBHOOK_SECRET: 'whsec_test_placeholder_signing_secret',
 };
 
 const mockCtx = {
@@ -704,6 +709,7 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       'tollbooth_wallet_balance',
       'tollbooth_issue_receipt',
       'tollbooth_verify_x402',
+      'tollbooth_create_topup_checkout',
     ]);
 
     const quoteRes = await worker.fetch(
@@ -856,5 +862,220 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       invalidReason: null,
     });
     expect(skewVerify.headers.get('Access-Control-Expose-Headers')).toContain('PAYMENT-REQUIRED');
+  });
+
+  it('handles Stripe webhook wallet top-ups, tier upgrades, signature rejection, /wallet/topup, /pay portal, and MCP checkout', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const webhookSecret = env.STRIPE_CONNECT_WEBHOOK_SECRET!;
+
+    // 1) Valid Stripe checkout.session.completed wallet top-up ($10.00 = 10,000,000 micros)
+    const topupEvent = JSON.stringify({
+      id: 'evt_topup_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_topup_1',
+          amount_total: 1000,
+          metadata: {
+            kind: 'wallet_topup',
+            wallet_id: 'wallet_main',
+          },
+        },
+      },
+    });
+    const topupSig = await signStripeWebhookPayload(topupEvent, webhookSecret, now);
+    const topupRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/webhook/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': topupSig,
+        },
+        body: topupEvent,
+      }),
+      env,
+      mockCtx,
+    );
+    expect(topupRes.status).toBe(200);
+    expect((await topupRes.json()) as { kind: string; creditedMicros: number }).toMatchObject({
+      kind: 'wallet_topup',
+      creditedMicros: 10_000_000,
+    });
+
+    const afterTopupWallet = raw
+      .prepare('SELECT balance_micros FROM agent_wallets WHERE id = ?')
+      .get('wallet_main') as { balance_micros: number };
+    expect(afterTopupWallet.balance_micros).toBe(10_100_000);
+
+    // Replay same Stripe event -> idempotentReplay: true and NO double-credit
+    const topupReplay = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/webhook/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': topupSig,
+        },
+        body: topupEvent,
+      }),
+      env,
+      mockCtx,
+    );
+    expect(topupReplay.status).toBe(200);
+    expect((await topupReplay.json()) as { idempotentReplay: boolean }).toMatchObject({
+      idempotentReplay: true,
+    });
+    const afterReplayWallet = raw
+      .prepare('SELECT balance_micros FROM agent_wallets WHERE id = ?')
+      .get('wallet_main') as { balance_micros: number };
+    expect(afterReplayWallet.balance_micros).toBe(10_100_000);
+
+    // 2) Tampered signature and expired (>300s) webhook rejected with 400 INVALID_SIGNATURE + fix_hint
+    const badSigRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/webhook/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': `${topupSig.slice(0, -4)}0000`,
+        },
+        body: topupEvent,
+      }),
+      env,
+      mockCtx,
+    );
+    expect(badSigRes.status).toBe(400);
+    expect((await badSigRes.json()) as { code: string; fix_hint: string }).toMatchObject({
+      code: 'INVALID_SIGNATURE',
+    });
+
+    const oldSig = await signStripeWebhookPayload(topupEvent, webhookSecret, now - 400);
+    const expiredSigRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/webhook/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': oldSig,
+        },
+        body: topupEvent,
+      }),
+      env,
+      mockCtx,
+    );
+    expect(expiredSigRes.status).toBe(400);
+    expect((await expiredSigRes.json()) as { error: string; code: string }).toMatchObject({
+      error: 'stripe_signature_expired',
+      code: 'INVALID_SIGNATURE',
+    });
+
+    // 3) Stripe Pro Pass tier upgrade drops dev_hybrid fee from 7% to 3%
+    const upgradeEvent = JSON.stringify({
+      id: 'evt_upgrade_pro_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_pro_1',
+          amount_total: 3900,
+          metadata: {
+            kind: 'tier_upgrade',
+            developer_id: 'dev_hybrid',
+            target_tier: 'pro',
+          },
+        },
+      },
+    });
+    const upgradeSig = await signStripeWebhookPayload(upgradeEvent, webhookSecret, now);
+    const upgradeRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/webhook/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': upgradeSig,
+        },
+        body: upgradeEvent,
+      }),
+      env,
+      mockCtx,
+    );
+    expect(upgradeRes.status).toBe(200);
+    expect((await upgradeRes.json()) as { tier: string }).toMatchObject({ tier: 'pro' });
+
+    const receiptAfterUpgrade = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/wallet/issue-receipt', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.CLEARINGHOUSE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          walletId: 'wallet_main',
+          developerId: 'dev_hybrid',
+          audience: 'https://api.example.com/api/pro',
+          amountMicros: 10_000,
+          scheme: 'upto',
+        }),
+      }),
+      env,
+      mockCtx,
+    );
+    expect(receiptAfterUpgrade.status).toBe(200);
+    expect(
+      (
+        (await receiptAfterUpgrade.json()) as {
+          feeBreakdown: { feeBps: number; platformFeeMicros: number };
+        }
+      ).feeBreakdown,
+    ).toMatchObject({ feeBps: 300, platformFeeMicros: 300 });
+
+    // 4) POST /wallet/topup sandbox checkout + GET /pay Industrial portal + MCP tool
+    const checkoutRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/wallet/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletId: 'wallet_main', amountUsd: 10 }),
+      }),
+      env,
+      mockCtx,
+    );
+    expect(checkoutRes.status).toBe(200);
+    expect((await checkoutRes.json()) as { mode: string; amountMicros: number }).toMatchObject({
+      mode: 'sandbox',
+      amountMicros: 10_000_000,
+    });
+
+    const portalRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/pay'),
+      env,
+      mockCtx,
+    );
+    expect(portalRes.status).toBe(200);
+    const portalHtml = await portalRes.text();
+    expect(portalHtml).toContain('#1F2937');
+    expect(portalHtml).toContain('#D97706');
+    expect(portalHtml).toContain('#10B981');
+    expect(portalHtml).toContain('Fund Agent Wallet');
+
+    const mcpCheckoutRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 99,
+          method: 'tools/call',
+          params: {
+            name: 'tollbooth_create_topup_checkout',
+            arguments: { developerId: 'dev_hybrid', passTier: 'pro' },
+          },
+        }),
+      }),
+      env,
+      mockCtx,
+    );
+    const mcpCheckoutJson = (await mcpCheckoutRes.json()) as {
+      result: { structuredContent: { amountMicros: number; kind: string } };
+    };
+    expect(mcpCheckoutJson.result.structuredContent).toMatchObject({
+      amountMicros: 39_000_000,
+      kind: 'tier_upgrade',
+    });
   });
 });

@@ -917,4 +917,36 @@ describe('withTollbooth dual-rail edge middleware', () => {
     expect(railA.status).toBe(200);
     expect(railA.headers.get('X-Tollbooth-Rail')).toBe('x402');
   });
+
+  it('matches wildcard audiences with URL query strings and accepts X-Agent-Receipt with Bearer prefix', async () => {
+    const app = withTollbooth(
+      {
+        priceUsd: 0.01,
+        mode: 'sandbox',
+      },
+      (req) => Response.json({ url: req.url }),
+    );
+
+    const tokenWithPrefixAud = await createSandboxReceipt({
+      priceUsd: 0.01,
+      aud: 'https://sandbox.local/api/*',
+    });
+    const res1 = await app.fetch(
+      new Request('https://sandbox.local/api/search?q=alpha&page=2', {
+        headers: { 'X-Agent-Receipt': `Bearer ${tokenWithPrefixAud}` },
+      }),
+    );
+    expect(res1.status).toBe(200);
+
+    const tokenWithStarAud = await createSandboxReceipt({
+      priceUsd: 0.01,
+      aud: 'https://sandbox.local/api/search*',
+    });
+    const res2 = await app.fetch(
+      new Request('https://sandbox.local/api/search?q=beta', {
+        headers: { 'X-Agent-Receipt': tokenWithStarAud },
+      }),
+    );
+    expect(res2.status).toBe(200);
+  });
 });

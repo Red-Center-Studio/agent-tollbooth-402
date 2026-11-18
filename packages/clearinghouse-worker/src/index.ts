@@ -2,7 +2,9 @@ import {
   CORS_ALLOW_HEADERS,
   CORS_EXPOSE_HEADERS,
   DEFAULT_CLOCK_SKEW_SECONDS,
+  microsToUsdString,
   signFiatReceipt,
+  usdToMicros,
   type PaymentScheme,
   type RcsReceiptClaims,
   type X402PaymentSignature,
@@ -16,6 +18,11 @@ export interface Env {
   RECEIPT_SIGNING_SECRET: string;
   CLEARINGHOUSE_API_KEY: string;
   FACILITATOR_HMAC_SECRET?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_CONNECT_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_TOPUP_10?: string;
+  STRIPE_PRICE_PRO_PASS?: string;
+  STRIPE_PRICE_AGENCY_PASS?: string;
   PRO_PASS_URL?: string;
   ENVIRONMENT?: string;
 }
@@ -84,6 +91,92 @@ interface ExistingLedgerRow {
 }
 
 const textEncoder = new TextEncoder();
+
+const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+/**
+ * Generate a valid Stripe-Signature header (`t=<ts>,v1=<hmac_sha256_hex>`) via Web Crypto.
+ */
+export async function signStripeWebhookPayload(
+  rawBody: string,
+  secret: string,
+  timestampSeconds = Math.floor(Date.now() / 1000),
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    textEncoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signedPayload = `${timestampSeconds}.${rawBody}`;
+  const sigBuf = await crypto.subtle.sign('HMAC', key, textEncoder.encode(signedPayload));
+  return `t=${timestampSeconds},v1=${toHex(new Uint8Array(sigBuf))}`;
+}
+
+async function verifyStripeWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  secret: string | undefined,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!secret) {
+    return { ok: false, reason: 'stripe_webhook_secret_not_configured' };
+  }
+  if (!signatureHeader) {
+    return { ok: false, reason: 'missing_stripe_signature' };
+  }
+
+  let timestampStr: string | undefined;
+  const v1Sigs: string[] = [];
+  for (const part of signatureHeader.split(',')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) {
+      continue;
+    }
+    const k = part.slice(0, eqIdx).trim();
+    const v = part.slice(eqIdx + 1).trim();
+    if (k === 't') {
+      timestampStr = v;
+    } else if (k === 'v1') {
+      v1Sigs.push(v);
+    }
+  }
+
+  if (!timestampStr || !/^\d+$/.test(timestampStr) || v1Sigs.length === 0) {
+    return { ok: false, reason: 'malformed_stripe_signature' };
+  }
+
+  const timestamp = Number(timestampStr);
+  if (Math.abs(nowSeconds - timestamp) > STRIPE_WEBHOOK_TOLERANCE_SECONDS) {
+    return { ok: false, reason: 'stripe_signature_expired' };
+  }
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    textEncoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  const signedBytes = textEncoder.encode(`${timestamp}.${rawBody}`);
+
+  for (const candidateHex of v1Sigs) {
+    const sigBytes = decodeHexBytes(candidateHex);
+    if (!sigBytes) {
+      continue;
+    }
+    const sigBuf = sigBytes.buffer.slice(
+      sigBytes.byteOffset,
+      sigBytes.byteOffset + sigBytes.byteLength,
+    ) as ArrayBuffer;
+    if (await crypto.subtle.verify('HMAC', key, sigBuf, signedBytes)) {
+      return { ok: true };
+    }
+  }
+
+  return { ok: false, reason: 'stripe_signature_mismatch' };
+}
 
 function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint: string } {
   switch (reason) {
@@ -834,6 +927,472 @@ async function issueWalletReceiptInternal(
   return { status: 200, payload: responsePayload };
 }
 
+export interface TopupCheckoutBody {
+  walletId?: string;
+  amountUsd?: number | string;
+  developerId?: string;
+  passTier?: 'pro' | 'agency';
+  successUrl?: string;
+  cancelUrl?: string;
+}
+
+interface StripeEvent {
+  id: string;
+  type: string;
+  data?: {
+    object?: {
+      id?: string;
+      amount_total?: number;
+      metadata?: Record<string, string | undefined>;
+    };
+  };
+}
+
+async function handleStripeWebhook(request: Request, env: Env): Promise<Response> {
+  const rawBody = await request.text();
+  const sigCheck = await verifyStripeWebhookSignature(
+    rawBody,
+    request.headers.get('Stripe-Signature'),
+    env.STRIPE_CONNECT_WEBHOOK_SECRET,
+  );
+
+  if (!sigCheck.ok) {
+    return jsonWithCors(
+      {
+        error: sigCheck.reason ?? 'stripe_signature_mismatch',
+        code: 'INVALID_SIGNATURE',
+        fix_hint:
+          'Verify Stripe-Signature header (t=...,v1=...) against STRIPE_CONNECT_WEBHOOK_SECRET within 300s timestamp tolerance.',
+      },
+      400,
+    );
+  }
+
+  let event: StripeEvent;
+  try {
+    event = JSON.parse(rawBody) as StripeEvent;
+  } catch {
+    return jsonWithCors(
+      {
+        error: 'invalid_json',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'Send a valid JSON Stripe webhook event payload.',
+      },
+      400,
+    );
+  }
+
+  if (!event.id || !event.type) {
+    return jsonWithCors(
+      {
+        error: 'invalid_stripe_event',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'Stripe event must include id and type fields.',
+      },
+      400,
+    );
+  }
+
+  const eventIdemKey = `stripe_evt_${event.id}`;
+  const existingLedger = await env.DB.prepare(
+    'SELECT id FROM ledger_entries WHERE idempotency_key = ? LIMIT 1',
+  )
+    .bind(eventIdemKey)
+    .first<{ id: string }>();
+  const existingNonce = await env.DB.prepare(
+    'SELECT nonce FROM used_nonces WHERE nonce = ? LIMIT 1',
+  )
+    .bind(eventIdemKey)
+    .first<{ nonce: string }>();
+
+  if (existingLedger || existingNonce) {
+    return jsonWithCors({ received: true, idempotentReplay: true, eventId: event.id });
+  }
+
+  if (event.type !== 'checkout.session.completed') {
+    return jsonWithCors({ received: true, ignored: true, type: event.type });
+  }
+
+  const session = event.data?.object ?? {};
+  const meta = session.metadata ?? {};
+  const now = Math.floor(Date.now() / 1000);
+
+  if (meta.kind === 'tier_upgrade' && meta.developer_id) {
+    const targetTier = meta.target_tier === 'agency' ? 'agency' : meta.target_tier === 'pro' ? 'pro' : null;
+    if (!targetTier) {
+      return jsonWithCors(
+        {
+          error: 'invalid_target_tier',
+          code: 'INVALID_REQUEST',
+          fix_hint: 'metadata.target_tier must be "pro" or "agency".',
+        },
+        400,
+      );
+    }
+
+    const devUpdate = await env.DB.prepare('UPDATE developers SET tier = ? WHERE id = ?')
+      .bind(targetTier, meta.developer_id)
+      .run();
+
+    if ((devUpdate.meta?.changes ?? 0) !== 1) {
+      return jsonWithCors(
+        {
+          error: 'developer_not_found',
+          ...resolveClearinghouseGuidance('developer_not_found'),
+        },
+        404,
+      );
+    }
+
+    await env.DB.prepare(
+      'INSERT OR IGNORE INTO used_nonces (nonce, rail, wallet_or_payer, route_pattern, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+      .bind(eventIdemKey, 'fiat_wallet', meta.developer_id, '/webhook/stripe', now + 86_400, now)
+      .run();
+
+    return jsonWithCors({
+      received: true,
+      kind: 'tier_upgrade',
+      developerId: meta.developer_id,
+      tier: targetTier,
+    });
+  }
+
+  const walletId = meta.wallet_id;
+  if (!walletId) {
+    return jsonWithCors(
+      {
+        error: 'missing_wallet_id_metadata',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'Provide metadata.wallet_id for wallet_topup or metadata.developer_id for tier_upgrade.',
+      },
+      400,
+    );
+  }
+
+  const creditMicros =
+    meta.amount_micros && /^\d+$/.test(String(meta.amount_micros))
+      ? Number(meta.amount_micros)
+      : Number(session.amount_total ?? 0) * 10_000;
+
+  if (!Number.isSafeInteger(creditMicros) || creditMicros <= 0) {
+    return jsonWithCors(
+      {
+        error: 'invalid_topup_amount',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'Provide positive amount_total (cents) or metadata.amount_micros.',
+      },
+      400,
+    );
+  }
+
+  const walletUpdate = await env.DB.prepare(
+    'UPDATE agent_wallets SET balance_micros = balance_micros + ?, updated_at = ? WHERE id = ?',
+  )
+    .bind(creditMicros, now, walletId)
+    .run();
+
+  if ((walletUpdate.meta?.changes ?? 0) !== 1) {
+    return jsonWithCors(
+      {
+        error: 'wallet_not_found',
+        ...resolveClearinghouseGuidance('wallet_not_found'),
+      },
+      404,
+    );
+  }
+
+  await env.DB.prepare(
+    'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?)',
+  )
+    .bind(
+      `led_${crypto.randomUUID()}`,
+      eventIdemKey,
+      walletId,
+      'fiat_wallet',
+      'topup',
+      creditMicros,
+      creditMicros,
+      session.id ?? event.id,
+      JSON.stringify({ eventId: event.id, sessionId: session.id ?? null }),
+      now,
+    )
+    .run();
+
+  return jsonWithCors({
+    received: true,
+    kind: 'wallet_topup',
+    walletId,
+    creditedMicros: creditMicros,
+  });
+}
+
+async function createTopupCheckoutInternal(
+  body: TopupCheckoutBody,
+  env: Env,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  let amountMicros: number;
+  let kind: 'wallet_topup' | 'tier_upgrade';
+  let productName: string;
+  let stripePriceId: string | undefined;
+
+  if (body.passTier === 'pro' || body.passTier === 'agency') {
+    kind = 'tier_upgrade';
+    amountMicros = body.passTier === 'agency' ? 79_000_000 : 39_000_000;
+    productName =
+      body.passTier === 'agency'
+        ? 'Agent Tollbooth 402 — Agency Pass'
+        : 'Agent Tollbooth 402 — Pro Pass';
+    stripePriceId =
+      body.passTier === 'agency' ? env.STRIPE_PRICE_AGENCY_PASS : env.STRIPE_PRICE_PRO_PASS;
+  } else {
+    kind = 'wallet_topup';
+    try {
+      amountMicros = usdToMicros(body.amountUsd ?? 10);
+    } catch {
+      return {
+        status: 400,
+        payload: {
+          error: 'invalid_amount_usd',
+          code: 'INVALID_REQUEST',
+          fix_hint: 'Supply a valid positive amountUsd >= 1.00.',
+        },
+      };
+    }
+    if (amountMicros < 1_000_000) {
+      return {
+        status: 400,
+        payload: {
+          error: 'minimum_topup_one_dollar',
+          code: 'INVALID_REQUEST',
+          fix_hint: 'Minimum Fiat Agent Wallet top-up is $1.00 USD (1,000,000 microdollars).',
+        },
+      };
+    }
+    productName = 'Red Center Fiat Agent Wallet Top-Up';
+    if (amountMicros === 10_000_000) {
+      stripePriceId = env.STRIPE_PRICE_TOPUP_10;
+    }
+  }
+
+  const hasLiveOrTestStripeKey = Boolean(
+    env.STRIPE_SECRET_KEY &&
+      env.STRIPE_SECRET_KEY.startsWith('sk_') &&
+      !env.STRIPE_SECRET_KEY.includes('placeholder'),
+  );
+
+  const successUrl = body.successUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=success';
+  const cancelUrl = body.cancelUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=cancelled';
+
+  if (hasLiveOrTestStripeKey && env.STRIPE_SECRET_KEY) {
+    const form = new URLSearchParams();
+    form.set('mode', 'payment');
+    form.set('success_url', successUrl);
+    form.set('cancel_url', cancelUrl);
+    if (stripePriceId) {
+      form.set('line_items[0][price]', stripePriceId);
+      form.set('line_items[0][quantity]', '1');
+    } else {
+      const unitAmountCents = Math.round(amountMicros / 10_000);
+      form.set('line_items[0][price_data][currency]', 'usd');
+      form.set('line_items[0][price_data][unit_amount]', String(unitAmountCents));
+      form.set('line_items[0][price_data][product_data][name]', productName);
+      form.set('line_items[0][quantity]', '1');
+    }
+    form.set('metadata[kind]', kind);
+    form.set('metadata[amount_micros]', String(amountMicros));
+    if (body.walletId) {
+      form.set('metadata[wallet_id]', body.walletId);
+    }
+    if (body.developerId) {
+      form.set('metadata[developer_id]', body.developerId);
+    }
+    if (body.passTier) {
+      form.set('metadata[target_tier]', body.passTier);
+    }
+
+    const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    });
+    const stripeJson = (await stripeRes.json()) as {
+      id?: string;
+      url?: string;
+      error?: { message?: string };
+    };
+    if (!stripeRes.ok || !stripeJson.url) {
+      return {
+        status: 502,
+        payload: {
+          error: 'stripe_checkout_failed',
+          code: 'FACILITATOR_ERROR',
+          fix_hint: stripeJson.error?.message ?? 'Check STRIPE_SECRET_KEY and Stripe API status.',
+        },
+      };
+    }
+    return {
+      status: 200,
+      payload: {
+        checkoutUrl: stripeJson.url,
+        sessionId: stripeJson.id,
+        amountMicros,
+        amountUsd: microsToUsdString(amountMicros),
+        kind,
+        mode: 'stripe',
+      },
+    };
+  }
+
+  const sandboxSessionId = `cs_sandbox_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  return {
+    status: 200,
+    payload: {
+      checkoutUrl: `https://tollbooth.redcenterstudio.com/pay?sandbox_session=${sandboxSessionId}&kind=${kind}`,
+      sessionId: sandboxSessionId,
+      amountMicros,
+      amountUsd: microsToUsdString(amountMicros),
+      kind,
+      productName,
+      mode: 'sandbox',
+    },
+  };
+}
+
+async function handleWalletTopup(request: Request, env: Env): Promise<Response> {
+  let body: TopupCheckoutBody;
+  try {
+    body = (await request.json()) as TopupCheckoutBody;
+  } catch {
+    return jsonWithCors(
+      {
+        error: 'invalid_json',
+        ...resolveClearinghouseGuidance('invalid_json'),
+      },
+      400,
+    );
+  }
+  const result = await createTopupCheckoutInternal(body, env);
+  return jsonWithCors(result.payload, result.status);
+}
+
+function renderClearinghousePortalHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Tollbooth 402 — Red Center Clearinghouse</title>
+  <style>
+    :root {
+      --bg: #1F2937;
+      --surface: #111827;
+      --amber: #D97706;
+      --emerald: #10B981;
+      --text: #F9FAFB;
+      --muted: #9CA3AF;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px 20px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; }
+    .header {
+      background: var(--surface);
+      border: 1px solid #374151;
+      border-top: 4px solid var(--amber);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(16, 185, 129, 0.14);
+      color: var(--emerald);
+      border: 1px solid var(--emerald);
+      margin-bottom: 10px;
+    }
+    h1 { margin: 0 0 8px; font-size: 26px; }
+    p { margin: 0; color: var(--muted); line-height: 1.5; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+    .card {
+      background: var(--surface);
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .price { font-size: 28px; font-weight: 800; color: #FBBF24; margin: 8px 0; }
+    .btn {
+      display: inline-block;
+      margin-top: 16px;
+      background: var(--amber);
+      color: #111827;
+      font-weight: 700;
+      font-size: 14px;
+      text-decoration: none;
+      text-align: center;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 0;
+      cursor: pointer;
+    }
+    .footer { margin-top: 24px; font-size: 13px; color: var(--muted); }
+    a { color: #FBBF24; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="header">
+      <span class="pill">[200 SETTLED] &lt;1ms Edge Dual-Rail Clearinghouse</span>
+      <h1>Agent Tollbooth 402 — Red Center Studio</h1>
+      <p>Fund prepaid Stripe Fiat Agent Wallets for sub-cent &lt;1ms API payments, or upgrade to Tollbooth Pro / Agency to cut clearinghouse fees from 7% to 3%.</p>
+    </section>
+    <section class="cards">
+      <article class="card">
+        <div>
+          <h2>Fund Fiat Agent Wallet</h2>
+          <div class="price">$5 &middot; $10 &middot; $25</div>
+          <p>Prepaid USD microdollar wallet issuing signed <code>rcs_receipt_...</code> tokens with atomic D1 nonce replay protection.</p>
+        </div>
+        <button class="btn" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>
+      </article>
+      <article class="card">
+        <div>
+          <h2>Tollbooth Pro / Agency Pass</h2>
+          <div class="price">$39 / $79 one-time</div>
+          <p>Drops clearinghouse fee from 7% to 3%, unlocks <code>upto</code> per-token metering, custom 402 pages, and spend caps.</p>
+        </div>
+        <button class="btn" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Unlock Pro Pass ($39)</button>
+      </article>
+      <article class="card">
+        <div>
+          <h2>Done-For-You Integration</h2>
+          <div class="price">From $399</div>
+          <p>Custom MCP + HTTP 402 Tollbooth wrapping, D1 ledger deployment, and verification by Red Center Studio.</p>
+        </div>
+        <a class="btn" href="https://redcenterstudio.com" rel="noopener noreferrer">Book Integration</a>
+      </article>
+    </section>
+    <p class="footer">Free / BYO x402 Mode remains $0 with 0% clearinghouse fee. Remote MCP endpoint: <code>https://tollbooth.redcenterstudio.com/mcp</code></p>
+  </main>
+</body>
+</html>`;
+}
+
 async function handleIssueReceipt(request: Request, env: Env): Promise<Response> {
   if (!(await isAuthorizedAdminRequest(request, env))) {
     return jsonWithCors(
@@ -924,6 +1483,20 @@ const MCP_TOOLS = [
         paymentRequirements: { type: 'object' },
       },
       required: ['x402Version', 'paymentPayload', 'paymentRequirements'],
+    },
+  },
+  {
+    name: 'tollbooth_create_topup_checkout',
+    description:
+      'Create a Stripe Checkout (or local sandbox) URL to fund an agent wallet ($1+) or upgrade a developer to Tollbooth Pro ($39) / Agency ($79).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        walletId: { type: 'string' },
+        amountUsd: { type: 'number', minimum: 1 },
+        developerId: { type: 'string' },
+        passTier: { type: 'string', enum: ['pro', 'agency'] },
+      },
     },
   },
 ] as const;
@@ -1037,6 +1610,15 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       });
     }
 
+    if (toolName === 'tollbooth_create_topup_checkout') {
+      const checkout = await createTopupCheckoutInternal(args as unknown as TopupCheckoutBody, env);
+      return jsonRpcOk(rpc.id, {
+        isError: checkout.status >= 400,
+        content: [{ type: 'text', text: JSON.stringify(checkout.payload) }],
+        structuredContent: checkout.payload,
+      });
+    }
+
     if (toolName === 'tollbooth_wallet_balance' || toolName === 'tollbooth_issue_receipt') {
       if (!(await isAuthorizedAdminRequest(request, env))) {
         return jsonRpcErr(rpc.id, -32001, 'Unauthorized: Bearer CLEARINGHOUSE_API_KEY required', 401);
@@ -1100,6 +1682,15 @@ export default {
         return withCors(new Response(null, { status: 204 }));
       }
 
+      if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/pay')) {
+        return withCors(
+          new Response(renderClearinghousePortalHtml(), {
+            status: 200,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          }),
+        );
+      }
+
       if (request.method === 'GET' && url.pathname === '/health') {
         return jsonWithCors({
           status: 'ok',
@@ -1125,11 +1716,20 @@ export default {
         return handleIssueReceipt(request, env);
       }
 
+      if (request.method === 'POST' && url.pathname === '/wallet/topup') {
+        return handleWalletTopup(request, env);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/webhook/stripe') {
+        return handleStripeWebhook(request, env);
+      }
+
       return jsonWithCors(
         {
           error: 'not_found',
           code: 'NOT_FOUND',
-          fix_hint: 'Supported routes: GET /health, POST /verify, POST /settle, POST /wallet/issue-receipt, POST /mcp.',
+          fix_hint:
+            'Supported routes: GET /, GET /pay, GET /health, POST /verify, POST /settle, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
         },
         404,
       );

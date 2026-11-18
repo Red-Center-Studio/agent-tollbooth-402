@@ -581,9 +581,21 @@ function matchesAudience(claimAud: string, expectedAudience: string): boolean {
   if (claimAud === expectedAudience) {
     return true;
   }
+  let expectedBase = expectedAudience;
+  try {
+    const reqUrl = new URL(expectedAudience);
+    expectedBase = `${reqUrl.origin}${reqUrl.pathname}`;
+  } catch {
+    // non-URL audience string
+  }
   if (claimAud.endsWith('/*')) {
+    const dirBase = claimAud.slice(0, -2);
     const prefix = claimAud.slice(0, -1);
-    return expectedAudience.startsWith(prefix);
+    return expectedBase === dirBase || expectedBase.startsWith(prefix);
+  }
+  if (claimAud.endsWith('*')) {
+    const prefix = claimAud.slice(0, -1);
+    return expectedBase.startsWith(prefix) || expectedAudience.startsWith(prefix);
   }
   try {
     const claimUrl = new URL(claimAud);
@@ -980,8 +992,15 @@ function isMethodMatch(routeMethod: string | string[] | undefined, reqMethod: st
 
 function extractFiatReceiptToken(request: Request): string | null {
   const custom = request.headers.get('X-Agent-Receipt');
-  if (custom && custom.trim().startsWith('rcs_receipt_')) {
-    return custom.trim();
+  if (custom) {
+    const trimmed = custom.trim();
+    if (trimmed.startsWith('rcs_receipt_')) {
+      return trimmed;
+    }
+    const customBearer = /^Bearer\s+(rcs_receipt_\S+)$/i.exec(trimmed);
+    if (customBearer?.[1]) {
+      return customBearer[1];
+    }
   }
   const auth = request.headers.get('Authorization');
   if (auth) {

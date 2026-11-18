@@ -11,8 +11,11 @@
     }
   },
   "vars": {
-    "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pro",
-    "ENVIRONMENT": "reference-local"
+    "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pay",
+    "ENVIRONMENT": "reference-local",
+    "STRIPE_PRICE_TOPUP_10": "price_1UcwkjHEzENMJ5rpkgIMOa1Y",
+    "STRIPE_PRICE_PRO_PASS": "price_1UcwmNHEzENMJ5rpYF5tFfbq",
+    "STRIPE_PRICE_AGENCY_PASS": "price_1UcwnZHEzENMJ5rpkGvjqE2j"
   },
   "d1_databases": [
     {
