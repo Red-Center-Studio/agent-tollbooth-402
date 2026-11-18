@@ -1366,6 +1366,177 @@ function buildDemo402Challenge(request: Request): X402PaymentRequired {
   };
 }
 
+function renderPortalStructuredDataJsonLd(): string {
+  const graph = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'SoftwareApplication',
+        name: 'Agent Tollbooth 402',
+        applicationCategory: 'DeveloperApplication',
+        operatingSystem: 'Cloudflare Workers, Node.js, Any HTTP Edge',
+        url: 'https://tollbooth.redcenterstudio.com/pay',
+        sameAs: [
+          'https://github.com/Red-Center-Studio/agent-tollbooth-402',
+          'https://glama.ai/mcp/servers/Red-Center-Studio/agent-tollbooth-402',
+        ],
+        author: {
+          '@type': 'Organization',
+          name: 'Red Center Studio',
+          url: 'https://redcenterstudio.com',
+        },
+        offers: [
+          {
+            '@type': 'Offer',
+            name: 'Free / BYO Crypto x402',
+            price: '0',
+            priceCurrency: 'USD',
+          },
+          {
+            '@type': 'Offer',
+            name: 'Tollbooth Pro Pass',
+            price: '39',
+            priceCurrency: 'USD',
+          },
+          {
+            '@type': 'Offer',
+            name: 'Agency Pass',
+            price: '79',
+            priceCurrency: 'USD',
+          },
+          {
+            '@type': 'Offer',
+            name: 'Done-For-You Setup',
+            price: '399',
+            priceCurrency: 'USD',
+          },
+        ],
+      },
+      {
+        '@type': 'FAQPage',
+        mainEntity: [
+          {
+            '@type': 'Question',
+            name: 'Can I use x402 V2 without paying any platform fee?',
+            acceptedAnswer: {
+              '@type': 'Answer',
+              text: 'Yes. Set your own payTo wallet address on Base (eip155:8453) in the middleware config to collect 100% of USDC agent payments directly (0% Red Center fee).',
+            },
+          },
+          {
+            '@type': 'Question',
+            name: 'How fast is the Fiat Agent Wallet receipt check?',
+            acceptedAnswer: {
+              '@type': 'Answer',
+              text: 'Edge verification validates an HMAC-SHA256 or Ed25519 receipt locally using Web Crypto in under 1ms without waiting for an external checkout round-trip.',
+            },
+          },
+          {
+            '@type': 'Question',
+            name: 'Can I test locally without a Stripe key or crypto wallet?',
+            acceptedAnswer: {
+              '@type': 'Answer',
+              text: 'Yes. Pass mode: "sandbox" or run /agent-tollbooth-402:test-agent to test 402 headers, signed receipts, browser checkout cards, and nonce replay blocking offline.',
+            },
+          },
+        ],
+      },
+    ],
+  };
+  return JSON.stringify(graph).replace(/</g, '\\u003c');
+}
+
+function renderLlmsTxt(): string {
+  const toolLines = MCP_TOOLS.map((t) => `- \`${t.name}\`: ${t.description}`).join('\n');
+  return [
+    '# Agent Tollbooth 402',
+    '',
+    '> Dual-rail HTTP 402 (x402 V2 Base USDC + <1ms Stripe-funded Fiat Agent Wallet) billing middleware, remote MCP clearinghouse, and Claude Code / Antigravity plugin by Red Center Studio.',
+    '',
+    '## Live Endpoints',
+    '- Portal & Pricing: https://tollbooth.redcenterstudio.com/pay',
+    '- Streamable HTTP MCP Endpoint: https://tollbooth.redcenterstudio.com/mcp',
+    '- MCP Discovery Card: https://tollbooth.redcenterstudio.com/.well-known/mcp.json',
+    '- Interactive HTTP 402 Demo (HTML & JSON): https://tollbooth.redcenterstudio.com/demo/402',
+    '- Health Check: https://tollbooth.redcenterstudio.com/health',
+    '',
+    '## Plugin Installation & Skills (Claude Code & Antigravity)',
+    '```',
+    '/plugin marketplace add Red-Center-Studio/agent-tollbooth-402',
+    '/plugin install agent-tollbooth-402@agent-tollbooth-402',
+    '```',
+    '- `/agent-tollbooth-402:scan-routes`: Scan Workers, Hono, Next.js App Router, Express, or MCP servers for monetizable routes.',
+    '- `/agent-tollbooth-402:install-tollbooth`: Inject zero-dependency dual-rail HTTP 402 middleware.',
+    '- `/agent-tollbooth-402:test-agent`: Run a 30-second offline 402 challenge, receipt verification, and replay-guard smoke test.',
+    '',
+    '## Quick Edge Middleware Snippet',
+    '```ts',
+    "import { withTollbooth } from '@redcenterstudio/agent-tollbooth-edge';",
+    '',
+    'export default withTollbooth({ priceUsd: 0.01, mode: "hybrid" }, async (request) => {',
+    '  return Response.json({ ok: true, path: new URL(request.url).pathname });',
+    '});',
+    '```',
+    '',
+    '## Remote MCP Tools',
+    toolLines,
+    '',
+    '## Clearinghouse Pricing',
+    '- Free / BYO Crypto x402: $0 USD, 0% fee (100% net to your Base `payTo` wallet)',
+    '- Hybrid Clearinghouse: $0/mo + 7% fee (93% net via Stripe-funded Fiat Agent Wallets)',
+    '- Tollbooth Pro Pass: $39 USD once (drops clearinghouse fee to 3%, unlocks `upto` per-token metering & custom 402 HTML)',
+    '- Agency Pass: $79 USD once (multi-project 3% clearinghouse fee)',
+    '- Done-For-You Setup: From $399 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
+    '',
+    '## Directory & Source Links',
+    '- GitHub: https://github.com/Red-Center-Studio/agent-tollbooth-402',
+    '- Glama Listing: https://glama.ai/mcp/servers/Red-Center-Studio/agent-tollbooth-402',
+  ].join('\n');
+}
+
+function renderWellKnownMcpManifest(): Record<string, unknown> {
+  return {
+    $schema: 'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json',
+    name: 'io.github.Red-Center-Studio/agent-tollbooth-402',
+    title: 'Agent Tollbooth 402',
+    version: '1.0.0',
+    description:
+      'HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and Stripe top-ups for APIs & MCP.',
+    websiteUrl: 'https://tollbooth.redcenterstudio.com/pay',
+    endpoint: 'https://tollbooth.redcenterstudio.com/mcp',
+    transport: 'streamable-http',
+    documentation: 'https://tollbooth.redcenterstudio.com/llms.txt',
+    repository: 'https://github.com/Red-Center-Studio/agent-tollbooth-402',
+    tools: MCP_TOOLS,
+  };
+}
+
+function renderRobotsTxt(): string {
+  return 'User-agent: *\nAllow: /\nSitemap: https://tollbooth.redcenterstudio.com/sitemap.xml\n';
+}
+
+function renderSitemapXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://tollbooth.redcenterstudio.com/pay</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://tollbooth.redcenterstudio.com/demo/402</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://tollbooth.redcenterstudio.com/llms.txt</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+</urlset>
+`;
+}
+
 function renderClearinghousePortalHtml(env: Env): string {
   const topupAction = env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
@@ -1387,6 +1558,18 @@ function renderClearinghousePortalHtml(env: Env): string {
   <meta name="theme-color" content="#24181a" />
   <title>Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
   <meta name="description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Self-serve crypto at 0% fee or Stripe-funded Fiat Agent Wallets." />
+  <link rel="canonical" href="https://tollbooth.redcenterstudio.com/pay" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Red Center Studio" />
+  <meta property="og:title" content="Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402" />
+  <meta property="og:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Self-serve crypto at 0% fee or Stripe-funded Fiat Agent Wallets." />
+  <meta property="og:url" content="https://tollbooth.redcenterstudio.com/pay" />
+  <meta property="og:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402" />
+  <meta name="twitter:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Self-serve crypto at 0% fee or Stripe-funded Fiat Agent Wallets." />
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
+  <script type="application/ld+json">${renderPortalStructuredDataJsonLd()}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" />
@@ -2632,6 +2815,46 @@ export default {
         });
       }
 
+      if (request.method === 'GET' && url.pathname === '/llms.txt') {
+        return withCors(
+          new Response(renderLlmsTxt(), {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'public, max-age=300',
+            },
+          }),
+        );
+      }
+
+      if (request.method === 'GET' && url.pathname === '/.well-known/mcp.json') {
+        return jsonWithCors(renderWellKnownMcpManifest());
+      }
+
+      if (request.method === 'GET' && url.pathname === '/robots.txt') {
+        return withCors(
+          new Response(renderRobotsTxt(), {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'public, max-age=3600',
+            },
+          }),
+        );
+      }
+
+      if (request.method === 'GET' && url.pathname === '/sitemap.xml') {
+        return withCors(
+          new Response(renderSitemapXml(), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/xml; charset=utf-8',
+              'Cache-Control': 'public, max-age=3600',
+            },
+          }),
+        );
+      }
+
       if (url.pathname === '/mcp') {
         return handleMcp(request, env);
       }
@@ -2661,7 +2884,7 @@ export default {
           error: 'not_found',
           code: 'NOT_FOUND',
           fix_hint:
-            'Supported routes: GET /, GET /pay, GET /health, POST /verify, POST /settle, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
+            'Supported routes: GET /, GET /pay, GET /demo/402, GET /health, GET /llms.txt, GET /.well-known/mcp.json, GET /robots.txt, GET /sitemap.xml, POST /verify, POST /settle, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
         },
         404,
       );

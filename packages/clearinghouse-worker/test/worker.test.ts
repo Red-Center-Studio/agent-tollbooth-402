@@ -1157,5 +1157,63 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       code: 'MISSING_PAYMENT',
       priceUsd: '0.01',
     });
+
+    // 7) Organic SEO / GEO / AI Crawler discovery routes (/pay metadata, /llms.txt, /.well-known/mcp.json, /robots.txt, /sitemap.xml)
+    expect(portalHtml).toContain('<script type="application/ld+json">');
+    expect(portalHtml).toContain('SoftwareApplication');
+    expect(portalHtml).toContain('FAQPage');
+    expect(portalHtml).toContain('rel="canonical"');
+    expect(portalHtml).toContain('property="og:image"');
+
+    const llmsRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/llms.txt'),
+      env,
+      mockCtx,
+    );
+    expect(llmsRes.status).toBe(200);
+    expect(llmsRes.headers.get('Content-Type')).toContain('text/plain');
+    const llmsText = await llmsRes.text();
+    expect(llmsText).toContain('/agent-tollbooth-402:scan-routes');
+    expect(llmsText).toContain('https://tollbooth.redcenterstudio.com/mcp');
+    expect(llmsText).toContain('tollbooth_pricing_quote');
+
+    const wellKnownRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/.well-known/mcp.json'),
+      env,
+      mockCtx,
+    );
+    expect(wellKnownRes.status).toBe(200);
+    const wellKnownJson = (await wellKnownRes.json()) as {
+      name: string;
+      transport: string;
+      endpoint: string;
+      tools: unknown[];
+    };
+    expect(wellKnownJson).toMatchObject({
+      name: 'io.github.Red-Center-Studio/agent-tollbooth-402',
+      transport: 'streamable-http',
+      endpoint: 'https://tollbooth.redcenterstudio.com/mcp',
+    });
+    expect(wellKnownJson.tools).toHaveLength(5);
+
+    const robotsRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/robots.txt'),
+      env,
+      mockCtx,
+    );
+    expect(robotsRes.status).toBe(200);
+    expect(await robotsRes.text()).toContain('Sitemap: https://tollbooth.redcenterstudio.com/sitemap.xml');
+
+    const sitemapRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/sitemap.xml'),
+      env,
+      mockCtx,
+    );
+    expect(sitemapRes.status).toBe(200);
+    expect(sitemapRes.headers.get('Content-Type')).toContain('application/xml');
+    const sitemapText = await sitemapRes.text();
+    expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/pay');
+    expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/demo/402');
+    expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/llms.txt');
   });
 });

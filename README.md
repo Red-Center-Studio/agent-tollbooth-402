@@ -4,6 +4,11 @@
 
 Built by [Red Center Studio](https://redcenterstudio.com) for **Google Antigravity** and **Claude Code**.
 
+[![Red-Center-Studio/agent-tollbooth-402 MCP server](https://glama.ai/mcp/servers/Red-Center-Studio/agent-tollbooth-402/badges/score.svg)](https://glama.ai/mcp/servers/Red-Center-Studio/agent-tollbooth-402)
+[![MCP Endpoint](https://img.shields.io/badge/MCP-Streamable%20HTTP-d9622b?style=flat-square)](https://tollbooth.redcenterstudio.com/mcp)
+[![Live Clearinghouse](https://img.shields.io/badge/Clearinghouse-Live-4f7f63?style=flat-square)](https://tollbooth.redcenterstudio.com/pay)
+[![License: MIT](https://img.shields.io/badge/License-MIT-e3a23c?style=flat-square)](./LICENSE)
+
 ---
 
 ## 3-Line Quickstart (30-Second Zero-Config Sandbox)

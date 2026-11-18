@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Red-Center-Studio/agent-tollbooth-402",
   "title": "Agent Tollbooth 402",
-  "description": "Dual-rail HTTP 402 (x402 V2 USDC + <1ms Fiat Agent Wallet) billing, quotes, and top-up tools for APIs and MCP servers.",
+  "description": "HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and Stripe top-ups for APIs & MCP.",
   "websiteUrl": "https://tollbooth.redcenterstudio.com/pay",
   "repository": {
     "url": "https://github.com/Red-Center-Studio/agent-tollbooth-402",
