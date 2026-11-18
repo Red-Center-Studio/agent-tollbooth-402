@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,12 +184,34 @@ const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
 ];
 
+function isGitIgnoredLocalSecretFile(entryName, fullPath) {
+  const matchesLocalSecretName =
+    entryName === 'SECRETS.local.env' ||
+    ((entryName === '.dev.vars' || entryName.startsWith('.dev.vars.')) &&
+      entryName !== '.dev.vars.example') ||
+    ((entryName === '.env' || entryName.startsWith('.env.')) &&
+      entryName !== '.env.example');
+  if (!matchesLocalSecretName) {
+    return false;
+  }
+  try {
+    execFileSync('git', ['check-ignore', '-q', fullPath], { cwd: ROOT, stdio: 'ignore' });
+    return true;
+  } catch {
+    fail(`Local secret file is NOT gitignored: ${path.relative(ROOT, fullPath)}`);
+    return false;
+  }
+}
+
 function walkFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (['node_modules', '.git', 'dist', 'coverage'].includes(entry.name)) {
+    const full = path.join(dir, entry.name);
+    if (
+      ['node_modules', '.git', 'dist', 'coverage'].includes(entry.name) ||
+      isGitIgnoredLocalSecretFile(entry.name, full)
+    ) {
       continue;
     }
-    const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walkFiles(full);
     } else if (entry.isFile()) {
