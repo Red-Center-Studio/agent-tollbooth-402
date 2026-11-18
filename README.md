@@ -75,7 +75,7 @@ flowchart LR
 
 | Tier | Price | Clearinghouse Fee (Developer Net) | What You Get |
 | :--- | :--- | :--- | :--- |
-| **Free / BYO x402 Mode** | **`$0`** | **`0%`** (`100%` net) | Unlimited `/scan-routes`, zero-dependency middleware injection, `/test-agent` simulator, `exact` x402 V2 scheme with any facilitator. |
+| **Free / BYO x402 Mode** | **`$0`** | **`0%`** (`100%` net) | Unlimited `/agent-tollbooth-402:scan-routes`, zero-dependency middleware injection, `/agent-tollbooth-402:test-agent` simulator, `exact` x402 V2 scheme with any facilitator. |
 | **Hybrid Fiat + x402 Clearinghouse** | **`$0/mo`** | **`7%`** (`93%` net) | Enables Stripe-funded Fiat Agent Wallets (`rcs_receipt_...` `<1ms` edge verification) + automated Stripe Connect payouts via `tollbooth.redcenterstudio.com`. |
 | **Tollbooth Pro Pass** | **`$39`** one-time (`$79` Agency) | **`3%`** (`97%` net) | Drops clearinghouse fee from `7%` to `3%`, unlocks `upto` dynamic per-token/per-KB metering, custom HTML `402` pages, and per-agent spend caps. |
 | **Done-For-You Integration** | **From `$399`** | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping, D1 ledger setup, and verification by [Red Center Studio](https://redcenterstudio.com). |

@@ -1903,7 +1903,7 @@ function renderClearinghousePortalHtml(env: Env): string {
                 <pre id="proof-code" class="proof-code">$ /plugin marketplace add Red-Center-Studio/agent-tollbooth-402
 $ /plugin install agent-tollbooth-402@agent-tollbooth-402
 
-[PASS] 3 skills (/scan-routes, /install-tollbooth, /test-agent)
+[PASS] 3 skills (/agent-tollbooth-402:scan-routes, /agent-tollbooth-402:install-tollbooth, /agent-tollbooth-402:test-agent)
 [PASS] Remote MCP ready: https://tollbooth.redcenterstudio.com/mcp</pre>
               </div>
               <div class="proof-caption-bar">
@@ -1928,17 +1928,17 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         <div class="grid g3">
           <article class="card">
             <span class="label">Free skill</span>
-            <h3><code>/scan-routes</code></h3>
+            <h3><code>/agent-tollbooth-402:scan-routes</code></h3>
             <p>Scans Workers, Hono, Next.js, Express, and MCP endpoints to pinpoint billable routes and propose per-call USD prices.</p>
           </article>
           <article class="card">
             <span class="label">Free skill</span>
-            <h3><code>/install-tollbooth</code></h3>
+            <h3><code>/agent-tollbooth-402:install-tollbooth</code></h3>
             <p>Injects <code>@redcenterstudio/agent-tollbooth-edge</code> with dual-rail x402 V2 + Fiat Wallet verification and CORS headers.</p>
           </article>
           <article class="card">
             <span class="label">Free skill</span>
-            <h3><code>/test-agent</code></h3>
+            <h3><code>/agent-tollbooth-402:test-agent</code></h3>
             <p>Runs an instant local 402 challenge, sandbox receipt signing, 200 OK retry, HTML card check, and nonce replay rejection test.</p>
           </article>
         </div>
@@ -2187,7 +2187,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             </details>
             <details>
               <summary>Can I test locally without a Stripe key or crypto wallet?</summary>
-              <p>Yes. Pass <code>mode: &quot;sandbox&quot;</code> or run <code>/test-agent</code> to test 402 headers, signed receipts, browser checkout cards, and nonce replay blocking offline.</p>
+              <p>Yes. Pass <code>mode: &quot;sandbox&quot;</code> or run <code>/agent-tollbooth-402:test-agent</code> to test 402 headers, signed receipts, browser checkout cards, and nonce replay blocking offline.</p>
             </details>
           </div>
         </div>
@@ -2249,7 +2249,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         {
           badge: 'Step 1 \\u00b7 Claude Code & Antigravity',
           challenge: false,
-          code: '$ /plugin marketplace add Red-Center-Studio/agent-tollbooth-402\\n$ /plugin install agent-tollbooth-402@agent-tollbooth-402\\n\\n[PASS] 3 skills (/scan-routes, /install-tollbooth, /test-agent)\\n[PASS] Remote MCP ready: https://tollbooth.redcenterstudio.com/mcp',
+          code: '$ /plugin marketplace add Red-Center-Studio/agent-tollbooth-402\\n$ /plugin install agent-tollbooth-402@agent-tollbooth-402\\n\\n[PASS] 3 skills (/agent-tollbooth-402:scan-routes, /agent-tollbooth-402:install-tollbooth, /agent-tollbooth-402:test-agent)\\n[PASS] Remote MCP ready: https://tollbooth.redcenterstudio.com/mcp',
           caption: 'Add the plugin in one command or connect the remote MCP server directly.'
         },
         {
