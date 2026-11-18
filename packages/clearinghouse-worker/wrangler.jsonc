@@ -1,4 +1,3 @@
-// REFERENCE CONFIGURATION ONLY — NEVER RUN wrangler deploy AGAINST LIVE INFRASTRUCTURE
 {
   "$schema": "https://developers.cloudflare.com/workers/wrangler/configuration/schema.json",
   "name": "agent-tollbooth-402-clearinghouse",
@@ -10,6 +9,12 @@
       "enabled": true
     }
   },
+  "routes": [
+    {
+      "pattern": "tollbooth.redcenterstudio.com",
+      "custom_domain": true
+    }
+  ],
   "vars": {
     "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pay",
     "ENVIRONMENT": "production",
@@ -25,8 +30,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "tollbooth-clearinghouse-local",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "tollbooth-clearinghouse",
+      "database_id": "e703786a-9bf7-4f00-adb1-b90cad5702d1",
       "migrations_dir": "migrations"
     }
   ],
@@ -47,8 +52,8 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "tollbooth-clearinghouse-local",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_name": "tollbooth-clearinghouse",
+          "database_id": "e703786a-9bf7-4f00-adb1-b90cad5702d1",
           "migrations_dir": "migrations"
         }
       ]

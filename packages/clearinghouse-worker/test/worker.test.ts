@@ -1128,5 +1128,33 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(portalWithLinksHtml).toContain('7% fee');
     expect(portalWithLinksHtml).toContain('3% fee');
     expect(portalWithLinksHtml).toContain('From $399');
+    expect(portalWithLinksHtml).toContain('@media (max-width: 640px)');
+
+    // 6) GET /demo/402 renders mobile-ready HTML 402 checkout card & JSON challenge
+    const demoHtmlRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/demo/402', {
+        headers: { Accept: 'text/html' },
+      }),
+      envWithLinks,
+      mockCtx,
+    );
+    expect(demoHtmlRes.status).toBe(402);
+    expect(demoHtmlRes.headers.get('PAYMENT-REQUIRED')).toBeTruthy();
+    const demoHtml = await demoHtmlRes.text();
+    expect(demoHtml).toContain('@media (max-width: 640px)');
+    expect(demoHtml).toContain('Fund Agent Wallet');
+
+    const demoJsonRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/demo/402', {
+        headers: { Accept: 'application/json' },
+      }),
+      envWithLinks,
+      mockCtx,
+    );
+    expect(demoJsonRes.status).toBe(402);
+    expect((await demoJsonRes.json()) as { code: string; priceUsd: string }).toMatchObject({
+      code: 'MISSING_PAYMENT',
+      priceUsd: '0.01',
+    });
   });
 });

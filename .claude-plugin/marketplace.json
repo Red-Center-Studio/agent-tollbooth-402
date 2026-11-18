@@ -1,0 +1,26 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agent-tollbooth-402",
+  "version": "1.0.0",
+  "description": "Dual-rail HTTP 402 monetization plugin (open x402 V2 + <1ms Red Center Fiat Agent Wallet) by Red Center Studio.",
+  "owner": {
+    "name": "Red Center Studio",
+    "email": "hello@redcenterstudio.com"
+  },
+  "plugins": [
+    {
+      "name": "agent-tollbooth-402",
+      "description": "Monetize APIs, Cloudflare Workers, Hono apps, and MCP servers in under 60 seconds with dual-rail HTTP 402 (open x402 V2 + <1ms Red Center Fiat Agent Wallet receipts).",
+      "version": "1.0.0",
+      "author": {
+        "name": "Red Center Studio",
+        "url": "https://redcenterstudio.com"
+      },
+      "homepage": "https://tollbooth.redcenterstudio.com",
+      "repository": "https://github.com/Red-Center-Studio/agent-tollbooth-402",
+      "license": "MIT",
+      "category": "development",
+      "source": "./"
+    }
+  ]
+}

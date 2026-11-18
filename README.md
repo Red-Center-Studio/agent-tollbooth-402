@@ -36,6 +36,20 @@ export default withTollbooth({ priceUsd: 0.01, mode: "hybrid" }, async (request)
 
 ---
 
+## Live Clearinghouse & Screenshots
+
+Live clearinghouse portal & MCP endpoint: `https://tollbooth.redcenterstudio.com` ([/pay](https://tollbooth.redcenterstudio.com/pay) · [/demo/402](https://tollbooth.redcenterstudio.com/demo/402))
+
+- [Setup Walkthrough Video (MP4)](./assets/screenshots/setup-walkthrough.mp4) — copying the install command, running the live `402` check, and inspecting the browser checkout card.
+
+![Clearinghouse Setup & 4-Tier Portal](./assets/screenshots/clearinghouse-portal.png)
+
+| HTTP 402 Browser Checkout Card | Mobile Responsive Layout (`390px`) |
+| :---: | :---: |
+| ![HTTP 402 Checkout Card](./assets/screenshots/http-402-checkout-card.png) | ![Mobile Clearinghouse View](./assets/screenshots/mobile-view.png) |
+
+---
+
 ## Dual-Rail Architecture & Browser 402 Checkout Card
 
 `agent-tollbooth-402` supports both **x402 V2** on-chain USDC authorizations and **Red Center Fiat Agent Wallets** verified in `<1ms` via Web Crypto (`HMAC-SHA256` / `Ed25519`).
@@ -73,7 +87,19 @@ flowchart LR
 Install in Claude Code:
 
 ```text
-/plugin install agent-tollbooth-402 --marketplace redcenterstudio/agent-tollbooth-402
+/plugin install agent-tollbooth-402 --marketplace Red-Center-Studio/agent-tollbooth-402
+```
+
+Install in Antigravity (`~/.gemini/config/plugins/`):
+
+```bash
+git clone https://github.com/Red-Center-Studio/agent-tollbooth-402.git ~/.gemini/config/plugins/agent-tollbooth-402
+```
+
+Install the zero-dependency Edge Middleware in a Worker, Hono, or Next.js project:
+
+```bash
+npm install github:Red-Center-Studio/agent-tollbooth-402
 ```
 
 - **Remote MCP Server (`mcp_config.json` & `.mcp.json`)**: Connects to `https://tollbooth.redcenterstudio.com/mcp` via Streamable HTTP (`tollbooth_pricing_quote`, `tollbooth_wallet_balance`, `tollbooth_issue_receipt`, `tollbooth_verify_x402`). See our [Privacy Policy](https://redcenterstudio.com/privacy).

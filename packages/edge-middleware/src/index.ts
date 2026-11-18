@@ -813,6 +813,8 @@ export function renderDefault402HtmlPage(
     ? 'x402 V2 (USDC) + Red Center Fiat Wallet'
     : 'x402 V2 (USDC)';
 
+  const safeCurl = `curl -H "PAYMENT-SIGNATURE: <base64_x402_v2>" "${request.url}"\ncurl -H "Authorization: Bearer rcs_receipt_..." "${request.url}"\n# payTo: ${payTo}`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -829,6 +831,7 @@ export function renderDefault402HtmlPage(
       --muted: #9CA3AF;
     }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
       min-height: 100vh;
@@ -842,62 +845,94 @@ export function renderDefault402HtmlPage(
     }
     .card {
       width: 100%;
-      max-width: 560px;
+      max-width: 580px;
       background: var(--surface);
       border: 1px solid #374151;
-      border-top: 4px solid var(--amber);
-      border-radius: 14px;
-      padding: 28px;
-      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+      border-top: 3px solid var(--amber);
+      border-radius: 10px;
+      padding: 26px;
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.38);
     }
-    .badges { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
     .badge {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       letter-spacing: 0.04em;
       padding: 4px 10px;
-      border-radius: 999px;
+      border-radius: 6px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-    .badge-amber { background: rgba(217, 119, 6, 0.18); color: #FBBF24; border: 1px solid var(--amber); }
-    .badge-emerald { background: rgba(16, 185, 129, 0.14); color: var(--emerald); border: 1px solid var(--emerald); }
-    h1 { margin: 0 0 8px; font-size: 22px; color: var(--text); }
+    .badge-amber { background: rgba(217, 119, 6, 0.16); color: #FBBF24; border: 1px solid var(--amber); }
+    .badge-emerald { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.55); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--emerald); display: inline-block; }
+    h1 { margin: 0 0 6px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
     p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 18px;
+      gap: 14px;
+      margin-bottom: 16px;
       background: #1F2937;
-      border-radius: 10px;
+      border: 1px solid #374151;
+      border-radius: 8px;
       padding: 14px;
     }
     .label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
-    .val { font-size: 14px; font-weight: 600; color: var(--text); word-break: break-all; margin-top: 2px; }
-    .price { font-size: 20px; color: #FBBF24; }
+    .val {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      overflow-wrap: anywhere;
+      margin-top: 3px;
+      font-variant-numeric: tabular-nums;
+    }
+    .price { font-size: 20px; color: #FBBF24; font-variant-numeric: tabular-nums; }
     .hint {
-      background: rgba(217, 119, 6, 0.1);
+      background: rgba(217, 119, 6, 0.09);
       border-left: 3px solid var(--amber);
-      padding: 12px 14px;
+      padding: 11px 14px;
       border-radius: 6px;
       font-size: 13px;
+      line-height: 1.45;
       color: var(--text);
-      margin-bottom: 20px;
+      margin-bottom: 16px;
+      overflow-wrap: anywhere;
     }
+    .code-wrap { position: relative; margin-bottom: 18px; }
     .code {
       background: #0B111B;
       border: 1px solid #374151;
       border-radius: 8px;
-      padding: 12px;
+      padding: 12px 72px 12px 12px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
+      line-height: 1.5;
       color: #E5E7EB;
-      overflow-x: auto;
-      margin-bottom: 20px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: #1F2937;
+      color: var(--text);
+      border: 1px solid #4B5563;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+      cursor: pointer;
     }
     .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
     .btn {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       background: var(--amber);
       color: #111827;
       font-weight: 700;
@@ -905,17 +940,26 @@ export function renderDefault402HtmlPage(
       text-decoration: none;
       padding: 11px 18px;
       border-radius: 8px;
+      min-height: 44px;
     }
     .brand { margin-left: auto; font-size: 12px; color: var(--muted); }
+    @media (max-width: 640px) {
+      body { padding: 14px; align-items: flex-start; }
+      .card { padding: 20px 16px; }
+      .grid { grid-template-columns: 1fr; gap: 12px; }
+      .actions { flex-direction: column; align-items: stretch; }
+      .btn { width: 100%; min-height: 48px; }
+      .brand { margin-left: 0; text-align: center; }
+    }
   </style>
 </head>
 <body>
   <main class="card">
     <div class="badges">
-      <span class="badge badge-amber">[402 CHALLENGE] ${escapeHtml(challenge.code)}</span>
-      <span class="badge badge-emerald">[200 SETTLED] &lt;1ms Edge Ready</span>
+      <span class="badge badge-amber">402 ${escapeHtml(challenge.code)}</span>
+      <span class="badge badge-emerald"><span class="dot"></span>x402 V2 &middot; Fiat Wallet Ready</span>
     </div>
-    <h1>HTTP 402 Payment Required</h1>
+    <h1>Payment Required</h1>
     <p>${escapeHtml(challenge.resource.description)}</p>
     <div class="grid">
       <div>
@@ -931,17 +975,18 @@ export function renderDefault402HtmlPage(
         <div class="val">${escapeHtml(railsText)}</div>
       </div>
       <div>
-        <div class="label">x402 Network / Atomic</div>
+        <div class="label">x402 Settlement</div>
         <div class="val">${escapeHtml(network)} &middot; ${escapeHtml(amountAtomic)} USDC</div>
       </div>
     </div>
-    <div class="hint"><strong>How to pay:</strong> ${escapeHtml(challenge.fix_hint)}</div>
-    <div class="code">curl -H "PAYMENT-SIGNATURE: &lt;base64_x402_v2&gt;" "${escapeHtml(request.url)}"
-curl -H "Authorization: Bearer rcs_receipt_..." "${escapeHtml(request.url)}"
-# payTo: ${escapeHtml(payTo)}</div>
+    <div class="hint"><strong>Next step:</strong> ${escapeHtml(challenge.fix_hint)}</div>
+    <div class="code-wrap">
+      <pre class="code" id="curl-cmd">${escapeHtml(safeCurl)}</pre>
+      <button class="copy-btn" type="button" onclick="var b=this;navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('curl-cmd').textContent).then(function(){b.textContent='COPIED';b.style.borderColor='#10B981';b.style.color='#10B981';setTimeout(function(){b.textContent='Copy';b.style.borderColor='#4B5563';b.style.color='#F9FAFB';},1500);})">Copy</button>
+    </div>
     <div class="actions">
       <a class="btn" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Fund Agent Wallet</a>
-      <span class="brand">Red Center Studio &middot; Agent Tollbooth 402</span>
+      <span class="brand">Red Center Studio &middot; tollbooth.redcenterstudio.com</span>
     </div>
   </main>
 </body>

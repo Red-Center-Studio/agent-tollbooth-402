@@ -2,11 +2,17 @@ import {
   CORS_ALLOW_HEADERS,
   CORS_EXPOSE_HEADERS,
   DEFAULT_CLOCK_SKEW_SECONDS,
+  DEFAULT_NETWORK,
+  DEFAULT_PAY_TO,
+  DEFAULT_USDC_BASE_ASSET,
+  encodePaymentHeader,
   microsToUsdString,
+  renderDefault402HtmlPage,
   signFiatReceipt,
   usdToMicros,
   type PaymentScheme,
   type RcsReceiptClaims,
+  type X402PaymentRequired,
   type X402PaymentSignature,
 } from '@redcenterstudio/agent-tollbooth-edge';
 
@@ -1321,6 +1327,44 @@ function escapeHtmlAttr(val: string): string {
     .replace(/>/g, '&gt;');
 }
 
+function buildDemo402Challenge(request: Request): X402PaymentRequired {
+  return {
+    x402Version: 2,
+    code: 'MISSING_PAYMENT',
+    error: 'PAYMENT-SIGNATURE or rcs_receipt bearer header is required',
+    fix_hint:
+      'Attach an x402 V2 Base64 PAYMENT-SIGNATURE header or an Authorization: Bearer rcs_receipt_... token for $0.01 USD (10000 microdollars).',
+    priceUsd: '0.01',
+    priceMicros: 10_000,
+    acceptedRails: ['x402-v2', 'rcs-fiat-wallet'],
+    paymentUrl: 'https://tollbooth.redcenterstudio.com/pay',
+    resource: {
+      url: 'https://tollbooth.redcenterstudio.com/api/v1/lookup',
+      description: 'Sample paywalled API route (GET /api/v1/lookup)',
+      mimeType: 'application/json',
+    },
+    accepts: [
+      {
+        scheme: 'exact',
+        network: DEFAULT_NETWORK,
+        amount: '10000',
+        asset: DEFAULT_USDC_BASE_ASSET,
+        payTo: DEFAULT_PAY_TO,
+        maxTimeoutSeconds: 60,
+        extra: { name: 'USDC', version: '2' },
+      },
+    ],
+    extensions: {
+      fiatAgentWallet: {
+        clearinghouseUrl: 'https://tollbooth.redcenterstudio.com',
+        headers: ['Authorization: Bearer rcs_receipt_...', 'X-Agent-Receipt'],
+        priceMicros: 10_000,
+        currency: 'USD_MICROS',
+      },
+    },
+  };
+}
+
 function renderClearinghousePortalHtml(env: Env): string {
   const topupAction = env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
@@ -1339,7 +1383,7 @@ function renderClearinghousePortalHtml(env: Env): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agent Tollbooth 402 — Red Center Clearinghouse</title>
+  <title>Agent Tollbooth 402 — Red Center Studio</title>
   <style>
     :root {
       --bg: #1F2937;
@@ -1350,9 +1394,10 @@ function renderClearinghousePortalHtml(env: Env): string {
       --muted: #9CA3AF;
     }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
-      padding: 32px 20px;
+      padding: 28px 20px 44px;
       background: var(--bg);
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
@@ -1361,29 +1406,109 @@ function renderClearinghousePortalHtml(env: Env): string {
     .header {
       background: var(--surface);
       border: 1px solid #374151;
-      border-top: 4px solid var(--amber);
-      border-radius: 14px;
+      border-top: 3px solid var(--amber);
+      border-radius: 10px;
       padding: 24px;
-      margin-bottom: 24px;
+      margin-bottom: 18px;
     }
     .pill {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
       padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
+      border-radius: 6px;
+      font-size: 11px;
       font-weight: 700;
-      background: rgba(16, 185, 129, 0.14);
+      letter-spacing: 0.04em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: rgba(16, 185, 129, 0.12);
       color: var(--emerald);
-      border: 1px solid var(--emerald);
-      margin-bottom: 10px;
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      margin-bottom: 12px;
     }
-    h1 { margin: 0 0 8px; font-size: 26px; }
-    p { margin: 0; color: var(--muted); line-height: 1.5; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--emerald); display: inline-block; }
+    h1 { margin: 0 0 8px; font-size: 25px; letter-spacing: -0.01em; }
+    h2 { margin: 0 0 6px; font-size: 17px; }
+    p { margin: 0; color: var(--muted); line-height: 1.5; font-size: 14px; }
+    .setup-panel {
+      background: var(--surface);
+      border: 1px solid #374151;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 18px;
+    }
+    .setup-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .setup-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .cmd-box {
+      background: #0B111B;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .cmd-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .cmd-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: #E5E7EB;
+      overflow-wrap: anywhere;
+      line-height: 1.45;
+    }
+    .cmd-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .copy-mini {
+      background: #1F2937;
+      color: var(--text);
+      border: 1px solid #4B5563;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    .sim-row {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #1F2937;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+    .sim-out {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
     .card {
       background: var(--surface);
       border: 1px solid #374151;
-      border-radius: 12px;
+      border-radius: 10px;
       padding: 20px;
       display: flex;
       flex-direction: column;
@@ -1397,9 +1522,18 @@ function renderClearinghousePortalHtml(env: Env): string {
       color: var(--emerald);
       margin-bottom: 6px;
     }
-    .price { font-size: 26px; font-weight: 800; color: #FBBF24; margin: 8px 0; }
+    .price {
+      font-size: 24px;
+      font-weight: 800;
+      color: #FBBF24;
+      margin: 8px 0;
+      font-variant-numeric: tabular-nums;
+    }
     .btn {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
       margin-top: 16px;
       background: var(--amber);
       color: #111827;
@@ -1411,6 +1545,7 @@ function renderClearinghousePortalHtml(env: Env): string {
       border-radius: 8px;
       border: 0;
       cursor: pointer;
+      min-height: 44px;
     }
     .btn-secondary {
       background: #1F2937;
@@ -1418,33 +1553,103 @@ function renderClearinghousePortalHtml(env: Env): string {
       border: 1px solid var(--amber);
       margin-top: 8px;
     }
-    .footer { margin-top: 24px; font-size: 13px; color: var(--muted); }
+    .btn-inline {
+      width: auto;
+      margin-top: 0;
+      padding: 8px 14px;
+      font-size: 13px;
+      min-height: 38px;
+    }
+    .footer {
+      margin-top: 22px;
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: space-between;
+    }
     a { color: #FBBF24; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: break-word; }
+    @media (max-width: 960px) {
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .setup-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      body { padding: 14px 12px 28px; overflow-x: hidden; }
+      .header, .setup-panel, .card { padding: 18px 14px; }
+      h1 { font-size: 21px; }
+      .cards { grid-template-columns: 1fr; }
+      .btn { min-height: 48px; }
+      .btn-inline { width: 100%; min-height: 46px; }
+      .footer { flex-direction: column; gap: 6px; align-items: flex-start; }
+    }
   </style>
 </head>
 <body>
   <main class="wrap">
     <section class="header">
-      <span class="pill">[200 SETTLED] &lt;1ms Edge Dual-Rail Clearinghouse</span>
-      <h1>Agent Tollbooth 402 — Red Center Studio</h1>
-      <p>Fund prepaid Stripe Fiat Agent Wallets for sub-cent &lt;1ms API payments, or upgrade to Tollbooth Pro / Agency to cut clearinghouse fees from 7% to 3%.</p>
+      <span class="pill"><span class="dot"></span>DUAL-RAIL HTTP 402 CLEARINGHOUSE &middot; &lt;1ms EDGE</span>
+      <h1>Agent Tollbooth 402</h1>
+      <p>Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP tool with HTTP 402. Accept self-hosted x402 V2 USDC crypto at 0% fee or Stripe-funded Fiat Agent Wallets.</p>
     </section>
+
+    <section class="setup-panel">
+      <div class="setup-head">
+        <div>
+          <h2>30-Second Install</h2>
+          <p>Works in Claude Code, Google Antigravity, and TypeScript Workers.</p>
+        </div>
+        <a class="btn btn-secondary btn-inline" href="/demo/402">Preview 402 Checkout Card</a>
+      </div>
+      <div class="setup-grid">
+        <div class="cmd-box">
+          <div class="cmd-label">Claude Code Plugin</div>
+          <div class="cmd-code" id="cmd-claude">/plugin install agent-tollbooth-402 --marketplace Red-Center-Studio/agent-tollbooth-402</div>
+          <div class="cmd-foot">
+            <span class="cmd-label">Skills + MCP</span>
+            <button class="copy-mini" type="button" onclick="copyText('cmd-claude',this)">Copy</button>
+          </div>
+        </div>
+        <div class="cmd-box">
+          <div class="cmd-label">Edge Middleware (Zero Deps)</div>
+          <div class="cmd-code" id="cmd-npm">npm install github:Red-Center-Studio/agent-tollbooth-402</div>
+          <div class="cmd-foot">
+            <span class="cmd-label">Workers / Hono / Next</span>
+            <button class="copy-mini" type="button" onclick="copyText('cmd-npm',this)">Copy</button>
+          </div>
+        </div>
+        <div class="cmd-box">
+          <div class="cmd-label">Remote Streamable MCP</div>
+          <div class="cmd-code" id="cmd-mcp">https://tollbooth.redcenterstudio.com/mcp</div>
+          <div class="cmd-foot">
+            <span class="cmd-label">Antigravity &amp; Claude</span>
+            <button class="copy-mini" type="button" onclick="copyText('cmd-mcp',this)">Copy</button>
+          </div>
+        </div>
+      </div>
+      <div class="sim-row">
+        <button id="sim-btn" class="btn btn-secondary btn-inline" type="button" onclick="runLiveCheck()">Run Live 402 &rarr; Health Check</button>
+        <span id="sim-out" class="sim-out">Click to test live 402 challenge header + clearinghouse latency.</span>
+      </div>
+    </section>
+
     <section class="cards">
       <article class="card">
         <div>
           <div class="tier-tag">Tier 1 &middot; Self-Serve Crypto</div>
           <h2>Free / BYO Crypto x402</h2>
           <div class="price">$0 &middot; 0% fee</div>
-          <p>Connect your own USDC wallet (<code>payTo</code> on Base <code>eip155:8453</code>) and any x402 V2 facilitator. Unlimited route scanning and sandbox testing.</p>
+          <p>Point <code>payTo</code> at your own Base USDC wallet (<code>eip155:8453</code>) with any x402 V2 facilitator. Unlimited <code>/scan-routes</code> and sandbox testing.</p>
         </div>
-        <a class="btn btn-secondary" href="https://github.com/redcenterstudio/agent-tollbooth-402" rel="noopener noreferrer">Setup Free x402 Middleware</a>
+        <a class="btn btn-secondary" href="https://github.com/Red-Center-Studio/agent-tollbooth-402" rel="noopener noreferrer">Setup Free x402</a>
       </article>
       <article class="card">
         <div>
           <div class="tier-tag">Tier 2 &middot; Stripe Fiat Rail</div>
           <h2>Hybrid Clearinghouse</h2>
           <div class="price">$0/mo + 7% fee</div>
-          <p>Hosted Stripe checkout and prepaid Fiat Agent Wallets on <code>tollbooth.redcenterstudio.com</code> with &lt;1ms <code>rcs_receipt_...</code> edge verification and Stripe payouts (93% developer net).</p>
+          <p>Hosted Stripe checkout and prepaid Fiat Agent Wallets on <code>tollbooth.redcenterstudio.com</code> with &lt;1ms <code>rcs_receipt_...</code> edge checks and 93% developer net.</p>
         </div>
         ${topupAction}
       </article>
@@ -1453,7 +1658,7 @@ function renderClearinghousePortalHtml(env: Env): string {
           <div class="tier-tag">Tier 3 &middot; Reduced Fee</div>
           <h2>Tollbooth Pro / Agency Pass</h2>
           <div class="price">$39 / $79 &middot; 3% fee</div>
-          <p>Cuts clearinghouse processing fee from 7% to 3% (97% net), unlocks <code>upto</code> per-token metering, custom 402 pages, and spend caps.</p>
+          <p>Cuts clearinghouse fee from 7% to 3% (97% net), unlocks <code>upto</code> per-token metering, custom 402 pages, and spend caps.</p>
         </div>
         <div>
           ${proAction}
@@ -1470,8 +1675,43 @@ function renderClearinghousePortalHtml(env: Env): string {
         <a class="btn" href="https://redcenterstudio.com" rel="noopener noreferrer">Book Integration</a>
       </article>
     </section>
-    <p class="footer">Free BYO Crypto x402 remains $0 with 0% clearinghouse fee. Remote MCP endpoint: <code>https://tollbooth.redcenterstudio.com/mcp</code></p>
+    <p class="footer">
+      <span>Red Center Studio &middot; <a href="https://github.com/Red-Center-Studio/agent-tollbooth-402">GitHub</a> &middot; <a href="https://redcenterstudio.com/privacy">Privacy</a></span>
+      <span>Health: <a href="/health">/health</a> &middot; Demo 402: <a href="/demo/402">/demo/402</a></span>
+    </p>
   </main>
+  <script>
+    function copyText(id, btn) {
+      var el = document.getElementById(id);
+      if (!el || !navigator.clipboard) return;
+      navigator.clipboard.writeText(el.textContent).then(function () {
+        btn.textContent = 'COPIED';
+        btn.style.borderColor = '#10B981';
+        btn.style.color = '#10B981';
+        setTimeout(function () {
+          btn.textContent = 'Copy';
+          btn.style.borderColor = '#4B5563';
+          btn.style.color = '#F9FAFB';
+        }, 1400);
+      });
+    }
+    async function runLiveCheck() {
+      var out = document.getElementById('sim-out');
+      out.textContent = 'Checking /demo/402 and /health...';
+      try {
+        var t0 = performance.now();
+        var r402 = await fetch('/demo/402', { headers: { Accept: 'application/json' } });
+        var hdr = r402.headers.get('PAYMENT-REQUIRED') || '';
+        var r200 = await fetch('/health');
+        var ms = Math.round(performance.now() - t0);
+        out.style.color = '#10B981';
+        out.textContent = '[402 CHALLENGE] HTTP ' + r402.status + ' | PAYMENT-REQUIRED (' + hdr.length + 'b) -> [200 OK] /health in ' + ms + 'ms';
+      } catch (e) {
+        out.style.color = '#FBBF24';
+        out.textContent = 'Check failed: ' + (e && e.message ? e.message : 'network error');
+      }
+    }
+  </script>
 </body>
 </html>`;
 }
@@ -1770,6 +2010,30 @@ export default {
           new Response(renderClearinghousePortalHtml(env), {
             status: 200,
             headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          }),
+        );
+      }
+
+      if (request.method === 'GET' && url.pathname === '/demo/402') {
+        const challenge = buildDemo402Challenge(request);
+        const demoReq = new Request('https://tollbooth.redcenterstudio.com/api/v1/lookup', {
+          method: 'GET',
+        });
+        const headers = new Headers({
+          'PAYMENT-REQUIRED': encodePaymentHeader(challenge),
+          'WWW-Authenticate': `x402, Bearer realm="agent-tollbooth-402", error="${challenge.code}"`,
+          'Cache-Control': 'no-store',
+        });
+        const accept = request.headers.get('Accept') ?? '';
+        if (accept.includes('application/json') && !accept.includes('text/html')) {
+          headers.set('Content-Type', 'application/json; charset=utf-8');
+          return withCors(new Response(JSON.stringify(challenge), { status: 402, headers }));
+        }
+        headers.set('Content-Type', 'text/html; charset=utf-8');
+        return withCors(
+          new Response(renderDefault402HtmlPage(challenge, demoReq), {
+            status: 402,
+            headers,
           }),
         );
       }

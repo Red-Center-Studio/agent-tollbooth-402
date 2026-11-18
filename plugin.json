@@ -11,7 +11,7 @@
   "homepage": "https://tollbooth.redcenterstudio.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/redcenterstudio/agent-tollbooth-402"
+    "url": "https://github.com/Red-Center-Studio/agent-tollbooth-402"
   },
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

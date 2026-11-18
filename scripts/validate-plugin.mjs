@@ -183,6 +183,19 @@ const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
 ];
 
+const BINARY_MEDIA_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.mp4',
+  '.webm',
+  '.tgz',
+  '.zip',
+  '.ico',
+]);
+
 function walkFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (['node_modules', '.git', 'dist', 'coverage'].includes(entry.name)) {
@@ -192,6 +205,9 @@ function walkFiles(dir) {
     if (entry.isDirectory()) {
       walkFiles(full);
     } else if (entry.isFile()) {
+      if (BINARY_MEDIA_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        continue;
+      }
       const content = readFileSync(full, 'utf8');
       for (const re of secretPatterns) {
         if (re.test(content)) {
