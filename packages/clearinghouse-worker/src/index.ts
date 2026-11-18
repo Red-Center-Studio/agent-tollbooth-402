@@ -15,6 +15,7 @@ import {
   type X402PaymentRequired,
   type X402PaymentSignature,
 } from '@redcenterstudio/agent-tollbooth-edge';
+import MCP_TOOLS from '../mcp-tools.json';
 
 export type DeveloperTier = 'free' | 'hybrid' | 'pro' | 'agency';
 export type SettlementRail = 'fiat_wallet' | 'x402';
@@ -2392,119 +2393,6 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-const MCP_TOOLS = [
-  {
-    name: 'tollbooth_pricing_quote',
-    title: 'Pricing & Net Revenue Quote',
-    description:
-      'Compute clearinghouse fee and developer net payout across Free BYO x402 (0%), Hybrid (7%), and Tollbooth Pro/Agency (3%) tiers in integer USD microdollars.',
-    annotations: {
-      title: 'Pricing & Net Revenue Quote',
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        priceMicros: { type: 'integer', minimum: 1 },
-        callsPerMonth: { type: 'integer', minimum: 1 },
-      },
-      required: ['priceMicros', 'callsPerMonth'],
-    },
-  },
-  {
-    name: 'tollbooth_wallet_balance',
-    title: 'Check Wallet Credit Balance',
-    description: 'Inspect an agent wallet credit balance, status, and remaining UTC daily spend cap. Read-only lookup.',
-    annotations: {
-      title: 'Check Wallet Credit Balance',
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        walletId: { type: 'string' },
-      },
-      required: ['walletId'],
-    },
-  },
-  {
-    name: 'tollbooth_issue_receipt',
-    title: 'Issue Signed Bearer Receipt',
-    description:
-      'Issue a short-lived Rail B rcs_receipt_hs256 bearer authorization token against an existing prepaid credit balance. Does not move bank or crypto funds.',
-    annotations: {
-      title: 'Issue Signed Bearer Receipt',
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false,
-    },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        walletId: { type: 'string' },
-        developerId: { type: 'string' },
-        audience: { type: 'string' },
-        method: { type: 'string' },
-        amountMicros: { type: 'integer', minimum: 1 },
-        scheme: { type: 'string', enum: ['exact', 'upto'] },
-        idempotencyKey: { type: 'string' },
-      },
-      required: ['walletId', 'developerId', 'audience', 'amountMicros'],
-    },
-  },
-  {
-    name: 'tollbooth_verify_x402',
-    title: 'Verify x402 V2 Payment Header',
-    description:
-      'Verify an x402 V2 paymentPayload signature and expiry against paymentRequirements and replay records. Does not execute on-chain transfers.',
-    annotations: {
-      title: 'Verify x402 V2 Payment Header',
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        x402Version: { type: 'integer' },
-        paymentPayload: { type: 'object' },
-        paymentRequirements: { type: 'object' },
-      },
-      required: ['x402Version', 'paymentPayload', 'paymentRequirements'],
-    },
-  },
-  {
-    name: 'tollbooth_create_topup_checkout',
-    title: 'Generate Checkout Link URL',
-    description:
-      'Return a Stripe Checkout or sandbox link URL that a user can open in a browser to fund a wallet ($1+) or purchase a Pro ($39) / Agency ($79) Pass. Never charges automatically.',
-    annotations: {
-      title: 'Generate Checkout Link URL',
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-    inputSchema: {
-      type: 'object',
-      properties: {
-        walletId: { type: 'string' },
-        amountUsd: { type: 'number', minimum: 1 },
-        developerId: { type: 'string' },
-        passTier: { type: 'string', enum: ['pro', 'agency'] },
-      },
-    },
-  },
-] as const;
-
 function jsonRpcOk(id: string | number | null | undefined, result: unknown): Response {
   return jsonWithCors({
     jsonrpc: '2.0',
@@ -2557,10 +2445,14 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
   }
 
   if (rpc.method === 'initialize') {
+    const requestedProtocol =
+      typeof rpc.params?.protocolVersion === 'string' ? rpc.params.protocolVersion : '2025-03-26';
     return jsonRpcOk(rpc.id, {
-      protocolVersion: '2025-03-26',
+      protocolVersion: requestedProtocol,
       capabilities: {
         tools: { listChanged: false },
+        resources: { listChanged: false },
+        prompts: { listChanged: false },
       },
       serverInfo: {
         name: 'agent-tollbooth-402-clearinghouse',
@@ -2571,6 +2463,14 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
 
   if (rpc.method === 'tools/list') {
     return jsonRpcOk(rpc.id, { tools: MCP_TOOLS });
+  }
+
+  if (rpc.method === 'resources/list') {
+    return jsonRpcOk(rpc.id, { resources: [] });
+  }
+
+  if (rpc.method === 'prompts/list') {
+    return jsonRpcOk(rpc.id, { prompts: [] });
   }
 
   if (rpc.method === 'tools/call') {

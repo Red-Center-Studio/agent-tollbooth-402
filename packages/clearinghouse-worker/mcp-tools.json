@@ -1,0 +1,165 @@
+[
+  {
+    "name": "tollbooth_pricing_quote",
+    "title": "Pricing & Net Revenue Quote",
+    "description": "Compute clearinghouse fee and developer net payout across Free BYO x402 (0%), Hybrid (7%), and Tollbooth Pro/Agency (3%) tiers in integer USD microdollars.",
+    "annotations": {
+      "title": "Pricing & Net Revenue Quote",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "priceMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-call price in integer USD microdollars (1 USD = 1000000 microdollars, e.g., 10000 for $0.01)."
+        },
+        "callsPerMonth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Estimated monthly paid API or MCP tool calls."
+        }
+      },
+      "required": ["priceMicros", "callsPerMonth"]
+    }
+  },
+  {
+    "name": "tollbooth_wallet_balance",
+    "title": "Check Wallet Credit Balance",
+    "description": "Inspect an agent wallet credit balance, status, and remaining UTC daily spend cap. Read-only lookup.",
+    "annotations": {
+      "title": "Check Wallet Credit Balance",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "walletId": {
+          "type": "string",
+          "description": "Agent wallet identifier to inspect (e.g., wallet_demo)."
+        }
+      },
+      "required": ["walletId"]
+    }
+  },
+  {
+    "name": "tollbooth_issue_receipt",
+    "title": "Issue Signed Bearer Receipt",
+    "description": "Issue a short-lived Rail B rcs_receipt_hs256 bearer authorization token against an existing prepaid credit balance. Does not move bank or crypto funds.",
+    "annotations": {
+      "title": "Issue Signed Bearer Receipt",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "walletId": {
+          "type": "string",
+          "description": "Source prepaid agent wallet identifier."
+        },
+        "developerId": {
+          "type": "string",
+          "description": "Recipient API developer identifier registered in the clearinghouse."
+        },
+        "audience": {
+          "type": "string",
+          "description": "Target URL path, route pattern, or '*' wildcard audience bound to the receipt."
+        },
+        "method": {
+          "type": "string",
+          "description": "HTTP verb constraint (e.g., GET, POST) or '*'."
+        },
+        "amountMicros": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum debit amount in integer USD microdollars."
+        },
+        "scheme": {
+          "type": "string",
+          "enum": ["exact", "upto"],
+          "description": "Payment authorization scheme ('exact' fixed charge or 'upto' metered ceiling)."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "description": "Optional idempotency key to prevent duplicate debit charges on retries."
+        }
+      },
+      "required": ["walletId", "developerId", "audience", "amountMicros"]
+    }
+  },
+  {
+    "name": "tollbooth_verify_x402",
+    "title": "Verify x402 V2 Payment Header",
+    "description": "Verify an x402 V2 paymentPayload signature and expiry against paymentRequirements and replay records. Does not execute on-chain transfers.",
+    "annotations": {
+      "title": "Verify x402 V2 Payment Header",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "x402Version": {
+          "type": "integer",
+          "description": "x402 protocol version integer (must equal 2)."
+        },
+        "paymentPayload": {
+          "type": "object",
+          "description": "Decoded x402 V2 PAYMENT-SIGNATURE JSON payload object."
+        },
+        "paymentRequirements": {
+          "type": "object",
+          "description": "Accepted payment requirements object specifying amount, network, and payTo address."
+        }
+      },
+      "required": ["x402Version", "paymentPayload", "paymentRequirements"]
+    }
+  },
+  {
+    "name": "tollbooth_create_topup_checkout",
+    "title": "Generate Checkout Link URL",
+    "description": "Return a Stripe Checkout or sandbox link URL that a user can open in a browser to fund a wallet ($1+) or purchase a Pro ($39) / Agency ($79) Pass. Never charges automatically.",
+    "annotations": {
+      "title": "Generate Checkout Link URL",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "walletId": {
+          "type": "string",
+          "description": "Agent wallet identifier to top up via Stripe Checkout."
+        },
+        "amountUsd": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Top-up amount in USD (minimum $1)."
+        },
+        "developerId": {
+          "type": "string",
+          "description": "Developer identifier for Pro ($39) or Agency ($79) pass upgrades."
+        },
+        "passTier": {
+          "type": "string",
+          "enum": ["pro", "agency"],
+          "description": "One-time developer tier upgrade to unlock 3% clearinghouse fee."
+        }
+      }
+    }
+  }
+]
