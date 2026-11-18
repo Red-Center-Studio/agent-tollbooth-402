@@ -2395,8 +2395,16 @@ interface JsonRpcRequest {
 const MCP_TOOLS = [
   {
     name: 'tollbooth_pricing_quote',
+    title: 'Pricing & Net Revenue Quote',
     description:
       'Compute clearinghouse fee and developer net payout across Free BYO x402 (0%), Hybrid (7%), and Tollbooth Pro/Agency (3%) tiers in integer USD microdollars.',
+    annotations: {
+      title: 'Pricing & Net Revenue Quote',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       type: 'object',
       properties: {
@@ -2408,7 +2416,15 @@ const MCP_TOOLS = [
   },
   {
     name: 'tollbooth_wallet_balance',
-    description: 'Inspect an agent wallet balance, status, and remaining UTC daily spend cap.',
+    title: 'Check Wallet Credit Balance',
+    description: 'Inspect an agent wallet credit balance, status, and remaining UTC daily spend cap. Read-only lookup.',
+    annotations: {
+      title: 'Check Wallet Credit Balance',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       type: 'object',
       properties: {
@@ -2419,8 +2435,16 @@ const MCP_TOOLS = [
   },
   {
     name: 'tollbooth_issue_receipt',
+    title: 'Issue Signed Bearer Receipt',
     description:
-      'Issue a short-lived Rail B rcs_receipt_hs256 bearer token debited atomically from a prepaid agent wallet.',
+      'Issue a short-lived Rail B rcs_receipt_hs256 bearer authorization token against an existing prepaid credit balance. Does not move bank or crypto funds.',
+    annotations: {
+      title: 'Issue Signed Bearer Receipt',
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       type: 'object',
       properties: {
@@ -2437,7 +2461,16 @@ const MCP_TOOLS = [
   },
   {
     name: 'tollbooth_verify_x402',
-    description: 'Verify an x402 V2 paymentPayload against paymentRequirements and D1 used_nonces.',
+    title: 'Verify x402 V2 Payment Header',
+    description:
+      'Verify an x402 V2 paymentPayload signature and expiry against paymentRequirements and replay records. Does not execute on-chain transfers.',
+    annotations: {
+      title: 'Verify x402 V2 Payment Header',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       type: 'object',
       properties: {
@@ -2450,8 +2483,16 @@ const MCP_TOOLS = [
   },
   {
     name: 'tollbooth_create_topup_checkout',
+    title: 'Generate Checkout Link URL',
     description:
-      'Create a Stripe Checkout (or local sandbox) URL to fund an agent wallet ($1+) or upgrade a developer to Tollbooth Pro ($39) / Agency ($79).',
+      'Return a Stripe Checkout or sandbox link URL that a user can open in a browser to fund a wallet ($1+) or purchase a Pro ($39) / Agency ($79) Pass. Never charges automatically.',
+    annotations: {
+      title: 'Generate Checkout Link URL',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: 'object',
       properties: {
