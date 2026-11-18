@@ -1215,5 +1215,18 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/pay');
     expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/demo/402');
     expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/llms.txt');
+
+    for (const glamaPath of ['/.well-known/glama.json', '/mcp/.well-known/glama.json']) {
+      const glamaClaimRes = await worker.fetch(
+        new Request(`https://tollbooth.redcenterstudio.com${glamaPath}`),
+        env,
+        mockCtx,
+      );
+      expect(glamaClaimRes.status).toBe(200);
+      expect((await glamaClaimRes.json()) as { $schema: string; claim: string }).toMatchObject({
+        $schema: 'https://glama.ai/mcp/schemas/connector.json',
+        claim: 'glama_claim_cyMUBGX_WjP7q4T153TkuepupDjd91bT',
+      });
+    }
   });
 });

@@ -2831,6 +2831,17 @@ export default {
         return jsonWithCors(renderWellKnownMcpManifest());
       }
 
+      if (
+        request.method === 'GET' &&
+        (url.pathname === '/.well-known/glama.json' || url.pathname === '/mcp/.well-known/glama.json')
+      ) {
+        return jsonWithCors({
+          $schema: 'https://glama.ai/mcp/schemas/connector.json',
+          claim: 'glama_claim_cyMUBGX_WjP7q4T153TkuepupDjd91bT',
+          maintainers: [{ email: 'housesharingappjerome@gmail.com' }],
+        });
+      }
+
       if (request.method === 'GET' && url.pathname === '/robots.txt') {
         return withCors(
           new Response(renderRobotsTxt(), {
