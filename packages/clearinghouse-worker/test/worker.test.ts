@@ -1124,5 +1124,9 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_topup10');
     expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_pro39');
     expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_agency79');
+    expect(portalWithLinksHtml).toContain('Free / BYO Crypto x402');
+    expect(portalWithLinksHtml).toContain('7% fee');
+    expect(portalWithLinksHtml).toContain('3% fee');
+    expect(portalWithLinksHtml).toContain('From $399');
   });
 });

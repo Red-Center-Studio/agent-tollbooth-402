@@ -1357,7 +1357,7 @@ function renderClearinghousePortalHtml(env: Env): string {
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     }
-    .wrap { max-width: 920px; margin: 0 auto; }
+    .wrap { max-width: 1080px; margin: 0 auto; }
     .header {
       background: var(--surface);
       border: 1px solid #374151;
@@ -1379,7 +1379,7 @@ function renderClearinghousePortalHtml(env: Env): string {
     }
     h1 { margin: 0 0 8px; font-size: 26px; }
     p { margin: 0; color: var(--muted); line-height: 1.5; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
     .card {
       background: var(--surface);
       border: 1px solid #374151;
@@ -1389,7 +1389,15 @@ function renderClearinghousePortalHtml(env: Env): string {
       flex-direction: column;
       justify-content: space-between;
     }
-    .price { font-size: 28px; font-weight: 800; color: #FBBF24; margin: 8px 0; }
+    .tier-tag {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--emerald);
+      margin-bottom: 6px;
+    }
+    .price { font-size: 26px; font-weight: 800; color: #FBBF24; margin: 8px 0; }
     .btn {
       display: inline-block;
       margin-top: 16px;
@@ -1424,17 +1432,28 @@ function renderClearinghousePortalHtml(env: Env): string {
     <section class="cards">
       <article class="card">
         <div>
-          <h2>Fund Fiat Agent Wallet</h2>
-          <div class="price">$5 &middot; $10 &middot; $25</div>
-          <p>Prepaid USD microdollar wallet issuing signed <code>rcs_receipt_...</code> tokens with atomic D1 nonce replay protection.</p>
+          <div class="tier-tag">Tier 1 &middot; Self-Serve Crypto</div>
+          <h2>Free / BYO Crypto x402</h2>
+          <div class="price">$0 &middot; 0% fee</div>
+          <p>Connect your own USDC wallet (<code>payTo</code> on Base <code>eip155:8453</code>) and any x402 V2 facilitator. Unlimited route scanning and sandbox testing.</p>
+        </div>
+        <a class="btn btn-secondary" href="https://github.com/redcenterstudio/agent-tollbooth-402" rel="noopener noreferrer">Setup Free x402 Middleware</a>
+      </article>
+      <article class="card">
+        <div>
+          <div class="tier-tag">Tier 2 &middot; Stripe Fiat Rail</div>
+          <h2>Hybrid Clearinghouse</h2>
+          <div class="price">$0/mo + 7% fee</div>
+          <p>Hosted Stripe checkout and prepaid Fiat Agent Wallets on <code>tollbooth.redcenterstudio.com</code> with &lt;1ms <code>rcs_receipt_...</code> edge verification and Stripe payouts (93% developer net).</p>
         </div>
         ${topupAction}
       </article>
       <article class="card">
         <div>
+          <div class="tier-tag">Tier 3 &middot; Reduced Fee</div>
           <h2>Tollbooth Pro / Agency Pass</h2>
-          <div class="price">$39 / $79 one-time</div>
-          <p>Drops clearinghouse fee from 7% to 3%, unlocks <code>upto</code> per-token metering, custom 402 pages, and spend caps.</p>
+          <div class="price">$39 / $79 &middot; 3% fee</div>
+          <p>Cuts clearinghouse processing fee from 7% to 3% (97% net), unlocks <code>upto</code> per-token metering, custom 402 pages, and spend caps.</p>
         </div>
         <div>
           ${proAction}
@@ -1443,6 +1462,7 @@ function renderClearinghousePortalHtml(env: Env): string {
       </article>
       <article class="card">
         <div>
+          <div class="tier-tag">Tier 4 &middot; Concierge</div>
           <h2>Done-For-You Integration</h2>
           <div class="price">From $399</div>
           <p>Custom MCP + HTTP 402 Tollbooth wrapping, D1 ledger deployment, and verification by Red Center Studio.</p>
@@ -1450,7 +1470,7 @@ function renderClearinghousePortalHtml(env: Env): string {
         <a class="btn" href="https://redcenterstudio.com" rel="noopener noreferrer">Book Integration</a>
       </article>
     </section>
-    <p class="footer">Free / BYO x402 Mode remains $0 with 0% clearinghouse fee. Remote MCP endpoint: <code>https://tollbooth.redcenterstudio.com/mcp</code></p>
+    <p class="footer">Free BYO Crypto x402 remains $0 with 0% clearinghouse fee. Remote MCP endpoint: <code>https://tollbooth.redcenterstudio.com/mcp</code></p>
   </main>
 </body>
 </html>`;
