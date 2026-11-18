@@ -36,7 +36,7 @@ async function runSandboxSmokeTest() {
     details: `HTTP ${unpaid.status} | code=${unpaidJson.code} | price=$${unpaidJson.priceUsd} | hint="${unpaidJson.fix_hint}"`,
   });
 
-  // 2. Browser HTML request -> [PASS] Industrial Charcoal/Amber/Emerald Checkout Card
+  // 2. Browser HTML request -> [PASS] Red Center Studio Ironstone/Ochre/Spinifex/Sand Checkout Card
   const browserRes = await gatedWorker.fetch(
     new Request('https://sandbox.local/api/v1/lookup', {
       headers: { Accept: 'text/html' },
@@ -46,9 +46,9 @@ async function runSandboxSmokeTest() {
   const htmlOk =
     browserRes.status === 402 &&
     (browserRes.headers.get('Content-Type') ?? '').includes('text/html') &&
-    html.includes('#1F2937') &&
-    html.includes('#D97706') &&
-    html.includes('#10B981');
+    html.includes('#24181a') &&
+    html.includes('#d9622b') &&
+    html.includes('#f5efe6');
   rows.push({
     step: '2. Browser HTML 402 Card',
     status: htmlOk ? '[PASS]' : '[ACTION NEEDED]',

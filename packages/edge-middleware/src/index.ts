@@ -796,7 +796,7 @@ function escapeHtml(text: string): string {
 }
 
 /**
- * Self-contained Red Center Studio Industrial HTML 402 Checkout Card rendered when
+ * Self-contained Red Center Studio HTML 402 Checkout Card rendered when
  * a browser sends `Accept: text/html` to a gated endpoint.
  */
 export function renderDefault402HtmlPage(
@@ -820,15 +820,30 @@ export function renderDefault402HtmlPage(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>402 Payment Required — Agent Tollbooth 402</title>
+  <meta name="theme-color" content="#24181a" />
+  <title>402 Payment Required — Agent Tollbooth 402 | Red Center Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" />
   <style>
     :root {
-      --bg: #1F2937;
-      --surface: #111827;
-      --amber: #D97706;
-      --emerald: #10B981;
-      --text: #F9FAFB;
-      --muted: #9CA3AF;
+      --ironstone: #24181a;
+      --ironstone-2: #32211f;
+      --ochre: #d9622b;
+      --ochre-deep: #a63d14;
+      --oxide: #7a2e1d;
+      --spinifex: #e3a23c;
+      --gum: #4f7f63;
+      --sand: #f5efe6;
+      --card: #fffcf8;
+      --line: #e3d7c8;
+      --ink: #2a1a16;
+      --muted: #6b5a52;
+      --on-dark: #f3e9de;
+      --on-dark-muted: #cbb9ab;
+      --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+      --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
     }
     * { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
@@ -836,158 +851,334 @@ export function renderDefault402HtmlPage(
       margin: 0;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
+      background: var(--sand);
+      color: var(--ink);
+      font: 400 16px/1.6 var(--body);
+    }
+    a { color: var(--ochre-deep); }
+    .site-head { background: var(--ironstone); color: var(--on-dark); }
+    .head-wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font: 500 12px/1 var(--mono);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--on-dark);
+      text-decoration: none;
+    }
+    .brand::before {
+      content: "";
+      width: 22px;
+      height: 22px;
+      flex: none;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3CclipPath id='s'%3E%3Ccircle cx='11' cy='11' r='11'/%3E%3C/clipPath%3E%3Cg clip-path='url(%23s)'%3E%3Crect width='22' height='12.5' fill='%23d9622b'/%3E%3Crect y='14.5' width='22' height='2.5' fill='%23d9622b'/%3E%3Crect y='19' width='22' height='2.5' fill='%23a63d14'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+    }
+    .head-link {
+      font: 600 14px/1 var(--body);
+      color: var(--spinifex);
+      text-decoration: none;
+    }
+    .head-link:hover { text-decoration: underline; }
+    .strata {
+      display: block;
+      height: 8px;
+      background: linear-gradient(to bottom, var(--oxide) 0 25%, var(--ochre-deep) 25% 50%, var(--ochre) 50% 75%, var(--spinifex) 75% 100%);
+    }
+    .stage {
+      flex: 1;
+      display: flex;
       align-items: center;
       justify-content: center;
-      padding: 24px;
-      background: var(--bg);
-      color: var(--text);
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      padding: 18px 20px 24px;
+    }
+    @keyframes cardRise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes softPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(79, 127, 99, 0.35); }
+      50% { box-shadow: 0 0 0 5px rgba(79, 127, 99, 0); }
     }
     .card {
       width: 100%;
-      max-width: 580px;
-      background: var(--surface);
-      border: 1px solid #374151;
-      border-top: 3px solid var(--amber);
-      border-radius: 10px;
-      padding: 26px;
-      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.38);
+      max-width: 650px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--ochre);
+      border-radius: 2px;
+      padding: 20px 24px;
+      box-shadow: 0 14px 36px rgba(36, 24, 26, 0.11);
+      animation: cardRise 0.35s ease-out both;
     }
-    .badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
     .badge {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      padding: 4px 9px;
+      border: 1px solid;
+      border-radius: 2px;
+      font: 500 11.5px/1.2 var(--mono);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
     }
-    .badge-amber { background: rgba(217, 119, 6, 0.16); color: #FBBF24; border: 1px solid var(--amber); }
-    .badge-emerald { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.55); }
-    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--emerald); display: inline-block; }
-    h1 { margin: 0 0 6px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-    p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.5; }
-    .grid {
+    .badge-ochre { background: #fbeee4; color: var(--ochre-deep); border-color: var(--ochre-deep); }
+    .badge-gum { background: #eaf2ec; color: #2f5a41; border-color: var(--gum); }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--gum);
+      display: inline-block;
+      animation: softPulse 2.2s ease-in-out infinite;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font: 800 clamp(24px, 3.8vw, 31px)/1.08 var(--display);
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+    .desc { margin: 0 0 12px; color: var(--muted); font-size: 15px; line-height: 1.45; }
+    .facts {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      margin-bottom: 16px;
-      background: #1F2937;
-      border: 1px solid #374151;
-      border-radius: 8px;
-      padding: 14px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 18px;
+      margin-bottom: 11px;
+      padding: 11px 14px;
+      background: var(--sand);
+      border: 1px solid var(--line);
+      border-radius: 2px;
     }
-    .label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
+    .fact-wide { grid-column: 1 / -1; padding-top: 8px; border-top: 1px solid var(--line); }
+    .label {
+      font: 500 11.5px/1.4 var(--mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ochre-deep);
+    }
     .val {
-      font-size: 14px;
+      font-size: 14.5px;
       font-weight: 600;
-      color: var(--text);
+      color: var(--ink);
       overflow-wrap: anywhere;
-      margin-top: 3px;
+      margin-top: 2px;
       font-variant-numeric: tabular-nums;
     }
-    .price { font-size: 20px; color: #FBBF24; font-variant-numeric: tabular-nums; }
+    .price {
+      font: 800 24px/1.1 var(--display);
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
     .hint {
-      background: rgba(217, 119, 6, 0.09);
-      border-left: 3px solid var(--amber);
-      padding: 11px 14px;
-      border-radius: 6px;
-      font-size: 13px;
+      background: #fbeee4;
+      border-left: 3px solid var(--ochre);
+      padding: 9px 13px;
+      border-radius: 2px;
+      font-size: 13.5px;
       line-height: 1.45;
-      color: var(--text);
-      margin-bottom: 16px;
+      color: var(--ink);
+      margin-bottom: 11px;
       overflow-wrap: anywhere;
     }
-    .code-wrap { position: relative; margin-bottom: 18px; }
+    .rails {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 11px;
+    }
+    .rail-box {
+      padding: 11px 13px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--spinifex);
+      border-radius: 2px;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .rail-box:hover {
+      transform: translateY(-1px);
+      border-color: #d6c4b0;
+      border-left-color: var(--ochre);
+    }
+    .rail-box h2 {
+      margin: 0 0 3px;
+      font: 700 14.5px/1.25 var(--body);
+      color: var(--ink);
+    }
+    .rail-box p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .code-shell {
+      border: 1px solid #3c2a27;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 13px;
+      background: var(--ironstone);
+    }
+    .code-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 12px;
+      background: #1a1112;
+      border-bottom: 1px solid rgba(243, 233, 222, 0.12);
+    }
+    .code-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font: 500 11px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--on-dark-muted);
+    }
+    .term-dots { display: inline-flex; gap: 5px; }
+    .term-dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(243, 233, 222, 0.3); display: inline-block; }
+    .term-dots i:first-child { background: var(--ochre); }
+    .term-dots i:nth-child(2) { background: var(--spinifex); }
     .code {
-      background: #0B111B;
-      border: 1px solid #374151;
-      border-radius: 8px;
-      padding: 12px 72px 12px 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
-      line-height: 1.5;
-      color: #E5E7EB;
+      background: var(--ironstone);
+      color: var(--on-dark);
+      padding: 11px 13px;
+      font: 500 12px/1.45 var(--mono);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       margin: 0;
     }
     .copy-btn {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      background: #1F2937;
-      color: var(--text);
-      border: 1px solid #4B5563;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 600;
-      padding: 5px 10px;
+      min-height: 26px;
+      padding: 3px 11px;
+      background: var(--card);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      font: 600 12px/1 var(--body);
       cursor: pointer;
     }
-    .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .copy-btn:hover { background: var(--spinifex); border-color: var(--spinifex); }
+    .sim-banner {
+      display: none;
+      margin-bottom: 12px;
+      padding: 10px 13px;
+      background: #eaf2ec;
+      border: 1px solid #b8d3c1;
+      border-left: 3px solid var(--gum);
+      border-radius: 2px;
+      font: 500 12.5px/1.45 var(--mono);
+      color: #214530;
+      overflow-wrap: anywhere;
+      animation: cardRise 0.25s ease-out both;
+    }
+    .sim-banner.show { display: block; }
+    .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      background: var(--amber);
-      color: #111827;
-      font-weight: 700;
-      font-size: 14px;
-      text-decoration: none;
-      padding: 11px 18px;
-      border-radius: 8px;
+      text-align: center;
       min-height: 44px;
+      padding: 9px 18px;
+      border: 1px solid transparent;
+      border-radius: 2px;
+      font: 600 14.5px/1.2 var(--body);
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
-    .brand { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .btn-primary { background: var(--ochre); color: #1e1412; }
+    .btn-primary:hover { background: var(--spinifex); }
+    .btn-ghost { background: transparent; color: var(--ink); border-color: var(--ink); }
+    .btn-ghost:hover { background: var(--ink); color: var(--sand); }
+    .btn-sand { background: var(--sand); color: var(--ink); border-color: #b9a898; }
+    .btn-sand:hover { border-color: var(--ochre-deep); background: #fbeee4; }
+    .meta-foot {
+      margin-top: 11px;
+      font: 400 12.5px/1.4 var(--body);
+      color: var(--muted);
+    }
+    @media (prefers-reduced-motion: reduce) { .card, .dot, .sim-banner { animation: none; } }
     @media (max-width: 640px) {
-      body { padding: 14px; align-items: flex-start; }
-      .card { padding: 20px 16px; }
-      .grid { grid-template-columns: 1fr; gap: 12px; }
+      .stage { padding: 18px 14px 32px; align-items: flex-start; }
+      .card { padding: 18px 16px; }
+      .facts, .rails { grid-template-columns: 1fr; gap: 10px; }
       .actions { flex-direction: column; align-items: stretch; }
       .btn { width: 100%; min-height: 48px; }
-      .brand { margin-left: 0; text-align: center; }
     }
   </style>
 </head>
 <body>
-  <main class="card">
-    <div class="badges">
-      <span class="badge badge-amber">402 ${escapeHtml(challenge.code)}</span>
-      <span class="badge badge-emerald"><span class="dot"></span>x402 V2 &middot; Fiat Wallet Ready</span>
+  <header class="site-head">
+    <div class="head-wrap">
+      <a class="brand" href="https://redcenterstudio.com/" rel="noopener noreferrer">Red Center Studio</a>
+      <a class="head-link" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Clearinghouse Portal</a>
     </div>
-    <h1>Payment Required</h1>
-    <p>${escapeHtml(challenge.resource.description)}</p>
-    <div class="grid">
-      <div>
-        <div class="label">Endpoint</div>
-        <div class="val">${escapeHtml(request.method.toUpperCase())} ${escapeHtml(url.pathname)}</div>
+    <span class="strata" aria-hidden="true"></span>
+  </header>
+  <main class="stage">
+    <article class="card">
+      <div class="badges">
+        <span class="badge badge-ochre">HTTP 402 &middot; ${escapeHtml(challenge.code)}</span>
+        <span class="badge badge-gum"><span class="dot"></span>${escapeHtml(railsText)}</span>
       </div>
-      <div>
-        <div class="label">Price (${escapeHtml(scheme)})</div>
-        <div class="val price">$${escapeHtml(challenge.priceUsd)} USD</div>
+      <h1>402 Payment Required</h1>
+      <p class="desc">${escapeHtml(challenge.resource.description)}</p>
+      <div class="facts">
+        <div>
+          <div class="label">Endpoint</div>
+          <div class="val">${escapeHtml(request.method.toUpperCase())} ${escapeHtml(url.pathname)}</div>
+        </div>
+        <div>
+          <div class="label">Price (${escapeHtml(scheme)})</div>
+          <div class="val price">$${escapeHtml(challenge.priceUsd)} USD</div>
+        </div>
+        <div class="fact-wide">
+          <div class="label">x402 Settlement Destination</div>
+          <div class="val">${escapeHtml(network)} &middot; ${escapeHtml(amountAtomic)} USDC &middot; payTo <code>${escapeHtml(payTo)}</code></div>
+        </div>
       </div>
-      <div>
-        <div class="label">Accepted Rails</div>
-        <div class="val">${escapeHtml(railsText)}</div>
+      <div class="rails">
+        <div class="rail-box">
+          <h2>Pay with Fiat Agent Wallet</h2>
+          <p>Top up with Stripe on Red Center Studio and pass a prepaid <code>rcs_receipt_...</code> bearer token for &lt;1ms edge verification.</p>
+        </div>
+        <div class="rail-box">
+          <h2>Pay with Crypto (x402 V2)</h2>
+          <p>Sign a Base USDC payment payload on <code>${escapeHtml(network)}</code> to <code>${escapeHtml(payTo)}</code> and retry with <code>PAYMENT-SIGNATURE</code>.</p>
+        </div>
       </div>
-      <div>
-        <div class="label">x402 Settlement</div>
-        <div class="val">${escapeHtml(network)} &middot; ${escapeHtml(amountAtomic)} USDC</div>
+      <div class="hint"><strong>Next step:</strong> ${escapeHtml(challenge.fix_hint)}</div>
+      <div class="code-shell">
+        <div class="code-bar">
+          <span class="code-title"><span class="term-dots"><i></i><i></i><i></i></span>HTTP 402 Retry Snippet &middot; x402 V2 &amp; Bearer Receipt</span>
+          <button class="copy-btn" type="button" onclick="var b=this;navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('curl-cmd').textContent).then(function(){b.textContent='Copied';b.style.borderColor='#4f7f63';b.style.color='#2f5a41';setTimeout(function(){b.textContent='Copy';b.style.borderColor='';b.style.color='';},1500);})">Copy</button>
+        </div>
+        <pre class="code" id="curl-cmd">${escapeHtml(safeCurl)}</pre>
       </div>
-    </div>
-    <div class="hint"><strong>Next step:</strong> ${escapeHtml(challenge.fix_hint)}</div>
-    <div class="code-wrap">
-      <pre class="code" id="curl-cmd">${escapeHtml(safeCurl)}</pre>
-      <button class="copy-btn" type="button" onclick="var b=this;navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('curl-cmd').textContent).then(function(){b.textContent='COPIED';b.style.borderColor='#10B981';b.style.color='#10B981';setTimeout(function(){b.textContent='Copy';b.style.borderColor='#4B5563';b.style.color='#F9FAFB';},1500);})">Copy</button>
-    </div>
-    <div class="actions">
-      <a class="btn" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Fund Agent Wallet</a>
-      <span class="brand">Red Center Studio &middot; tollbooth.redcenterstudio.com</span>
-    </div>
+      <div id="retry-status" class="sim-banner" role="status" aria-live="polite"></div>
+      <div class="actions">
+        <a class="btn btn-primary" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Fund Agent Wallet</a>
+        <button id="sim-retry-btn" class="btn btn-sand" type="button" onclick="var b=this,s=document.getElementById('retry-status');b.disabled=true;b.textContent='Verifying...';s.className='sim-banner show';s.textContent='Signing sandbox rcs_receipt_... via Web Crypto HMAC-SHA256...';setTimeout(function(){b.disabled=false;b.textContent='Verified (200 OK)';s.textContent='[200 SETTLED] Edge HMAC check passed in 0.4ms | PAYMENT-RESPONSE verified | ${escapeHtml(request.method.toUpperCase())} ${escapeHtml(url.pathname)} unlocked ($${escapeHtml(challenge.priceUsd)} USD)';},320);">Simulate &lt;1ms Receipt Retry</button>
+        <a class="btn btn-ghost" href="https://redcenterstudio.com/services/ai-tollbooth-setup/" rel="noopener noreferrer">See AI Tollbooth Setup</a>
+      </div>
+      <p class="meta-foot">Powered by Agent Tollbooth 402 &middot; <a href="https://redcenterstudio.com/" rel="noopener noreferrer">Red Center Studio</a></p>
+    </article>
   </main>
 </body>
 </html>`;

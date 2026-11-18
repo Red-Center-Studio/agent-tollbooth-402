@@ -55,7 +55,7 @@ Live clearinghouse portal & MCP endpoint: `https://tollbooth.redcenterstudio.com
 `agent-tollbooth-402` supports both **x402 V2** on-chain USDC authorizations and **Red Center Fiat Agent Wallets** verified in `<1ms` via Web Crypto (`HMAC-SHA256` / `Ed25519`).
 
 - **Programmatic AI Agents (`Accept: application/json`)**: Receive `402 Payment Required` with Base64 `PAYMENT-REQUIRED`, `WWW-Authenticate`, CORS `Access-Control-Expose-Headers`, `priceUsd`, `acceptedRails`, `code`, and a plain-English `fix_hint`.
-- **Human Browser Requests (`Accept: text/html`)**: Receive a responsive Red Center Studio Industrial `402` Checkout Card (`#1F2937` Charcoal, `#D97706` Safety Amber, `#10B981` Emerald) displaying endpoint details, price, payment curl snippets, and a **Fund Agent Wallet** action link.
+- **Human Browser Requests (`Accept: text/html`)**: Receive a responsive Red Center Studio `402` Checkout Card (`#24181a` Ironstone, `#d9622b` Red Ochre, `#e3a23c` Spinifex Gold, `#f5efe6` Sand) displaying endpoint details, price, payment curl snippets, and a **Fund Agent Wallet** action link.
 
 ```mermaid
 flowchart LR

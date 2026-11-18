@@ -704,7 +704,7 @@ describe('withTollbooth dual-rail edge middleware', () => {
     expect(((await ctx2.res?.json()) as X402PaymentRequired).error).toBe('agent_spend_cap_exceeded');
   });
 
-  it('negotiates HTML vs JSON on 402 responses with the Red Center Studio Industrial Palette', async () => {
+  it('negotiates HTML vs JSON on 402 responses with the Red Center Studio Palette', async () => {
     const worker = withTollbooth(
       {
         priceUsd: 0.01,
@@ -738,13 +738,17 @@ describe('withTollbooth dual-rail edge middleware', () => {
     expect(htmlRes.headers.get('Content-Type')).toContain('text/html');
     expect(htmlRes.headers.get('PAYMENT-REQUIRED')).toBeTruthy();
     const html = await htmlRes.text();
-    expect(html).toContain('#1F2937');
-    expect(html).toContain('#111827');
-    expect(html).toContain('#D97706');
-    expect(html).toContain('#10B981');
-    expect(html).toContain('#F9FAFB');
-    expect(html).toContain('#9CA3AF');
+    expect(html).toContain('#24181a');
+    expect(html).toContain('#d9622b');
+    expect(html).toContain('#e3a23c');
+    expect(html).toContain('#f5efe6');
+    expect(html).toContain('#fffcf8');
+    expect(html).toContain('#2a1a16');
+    expect(html).toContain('402 Payment Required');
+    expect(html).toContain('Pay with Fiat Agent Wallet');
+    expect(html).toContain('Pay with Crypto (x402 V2)');
     expect(html).toContain('Fund Agent Wallet');
+    expect(html).toContain('eip155:8453');
     expect(html).toContain('/api/data');
   });
 

@@ -1048,9 +1048,10 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     );
     expect(portalRes.status).toBe(200);
     const portalHtml = await portalRes.text();
-    expect(portalHtml).toContain('#1F2937');
-    expect(portalHtml).toContain('#D97706');
-    expect(portalHtml).toContain('#10B981');
+    expect(portalHtml).toContain('#24181a');
+    expect(portalHtml).toContain('#d9622b');
+    expect(portalHtml).toContain('#e3a23c');
+    expect(portalHtml).toContain('#f5efe6');
     expect(portalHtml).toContain('Fund Agent Wallet');
 
     const mcpCheckoutRes = await worker.fetch(
