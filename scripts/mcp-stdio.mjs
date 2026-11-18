@@ -94,6 +94,11 @@ rl.on('line', async (line) => {
     return;
   }
 
+  if (method === 'resources/templates/list') {
+    send({ jsonrpc: '2.0', id, result: { resourceTemplates: [] } });
+    return;
+  }
+
   if (method === 'prompts/list') {
     send({ jsonrpc: '2.0', id, result: { prompts: [] } });
     return;

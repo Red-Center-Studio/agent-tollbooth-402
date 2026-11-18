@@ -2469,6 +2469,10 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
     return jsonRpcOk(rpc.id, { resources: [] });
   }
 
+  if (rpc.method === 'resources/templates/list') {
+    return jsonRpcOk(rpc.id, { resourceTemplates: [] });
+  }
+
   if (rpc.method === 'prompts/list') {
     return jsonRpcOk(rpc.id, { prompts: [] });
   }
