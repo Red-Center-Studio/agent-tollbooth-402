@@ -177,6 +177,8 @@ if (ruleFm) {
 const secretPatterns = [
   /sk_live_[0-9A-Za-z]{16,}/,
   /rk_live_[0-9A-Za-z]{16,}/,
+  /sk_test_[0-9A-Za-z]{24,}/,
+  /rk_test_[0-9A-Za-z]{24,}/,
   /whsec_[0-9A-Za-z]{24,}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
 ];

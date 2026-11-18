@@ -1077,5 +1077,52 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       amountMicros: 39_000_000,
       kind: 'tier_upgrade',
     });
+
+    // 5) Hosted Payment Link resolution when STRIPE_PAYMENT_LINK_* env vars are configured
+    const envWithLinks: Env = {
+      ...env,
+      STRIPE_PAYMENT_LINK_TOPUP_10: 'https://buy.stripe.com/test_topup10',
+      STRIPE_PAYMENT_LINK_PRO_PASS: 'https://buy.stripe.com/test_pro39',
+      STRIPE_PAYMENT_LINK_AGENCY_PASS: 'https://buy.stripe.com/test_agency79',
+    };
+
+    const linkTopupRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/wallet/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletId: 'wallet_main', amountUsd: 10 }),
+      }),
+      envWithLinks,
+      mockCtx,
+    );
+    expect(linkTopupRes.status).toBe(200);
+    expect((await linkTopupRes.json()) as { mode: string; checkoutUrl: string }).toMatchObject({
+      mode: 'payment_link',
+      checkoutUrl: 'https://buy.stripe.com/test_topup10?client_reference_id=wallet_main',
+    });
+
+    const linkProRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/wallet/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ developerId: 'dev_hybrid', passTier: 'pro' }),
+      }),
+      envWithLinks,
+      mockCtx,
+    );
+    expect((await linkProRes.json()) as { mode: string; checkoutUrl: string }).toMatchObject({
+      mode: 'payment_link',
+      checkoutUrl: 'https://buy.stripe.com/test_pro39?client_reference_id=dev_hybrid',
+    });
+
+    const portalWithLinks = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/pay'),
+      envWithLinks,
+      mockCtx,
+    );
+    const portalWithLinksHtml = await portalWithLinks.text();
+    expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_topup10');
+    expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_pro39');
+    expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_agency79');
   });
 });

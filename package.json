@@ -11,6 +11,7 @@
     "typecheck": "npm --workspace=packages/edge-middleware run typecheck && npm --workspace=packages/clearinghouse-worker run typecheck",
     "test": "vitest run",
     "test:sandbox": "npm run build && node scripts/sandbox-smoke-test.mjs",
+    "setup:secrets": "node scripts/setup-local-secrets.mjs",
     "validate:plugin": "node scripts/validate-plugin.mjs",
     "validate": "npm run typecheck && npm run build && npm test && npm run validate:plugin"
   },

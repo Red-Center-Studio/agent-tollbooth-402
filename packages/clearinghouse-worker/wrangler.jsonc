@@ -12,10 +12,15 @@
   },
   "vars": {
     "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pay",
-    "ENVIRONMENT": "reference-local",
-    "STRIPE_PRICE_TOPUP_10": "price_1UcwkjHEzENMJ5rpkgIMOa1Y",
-    "STRIPE_PRICE_PRO_PASS": "price_1UcwmNHEzENMJ5rpYF5tFfbq",
-    "STRIPE_PRICE_AGENCY_PASS": "price_1UcwnZHEzENMJ5rpkGvjqE2j"
+    "ENVIRONMENT": "production",
+    "STRIPE_PUBLISHABLE_KEY": "pk_live_placeholder_copy_from_stripe_dashboard",
+    "STRIPE_WEBHOOK_ENDPOINT_ID": "we_1UcxFBHEzENMJ5rpKmaaJeGp",
+    "STRIPE_PRICE_TOPUP_10": "price_1UcxIZHEzENMJ5rpmbOcFzrV",
+    "STRIPE_PRICE_PRO_PASS": "price_1UcxKKHEzENMJ5rpCd2Sl0Sw",
+    "STRIPE_PRICE_AGENCY_PASS": "price_1UcxM1HEzENMJ5rp5lMD64ZI",
+    "STRIPE_PAYMENT_LINK_TOPUP_10": "https://buy.stripe.com/fZubJ1eKU4Mk7VL5eKbEA0h",
+    "STRIPE_PAYMENT_LINK_PRO_PASS": "https://buy.stripe.com/14AcN5cCM5Qo2BrdLgbEA0i",
+    "STRIPE_PAYMENT_LINK_AGENCY_PASS": "https://buy.stripe.com/cNicN5eKUdiQgshfTobEA0j"
   },
   "d1_databases": [
     {
@@ -24,5 +29,29 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    "test": {
+      "vars": {
+        "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pay",
+        "ENVIRONMENT": "test-sandbox",
+        "STRIPE_PUBLISHABLE_KEY": "pk_test_51UZgUCHEzENMJ5rpmYwHYvyHSsq8tVEV6wcFsaGxUzmVCMXr7QF4ybRDmzIdbzYgSGDAD2pcT2xQfpKO21YOhWIz00bwzQt2qH",
+        "STRIPE_WEBHOOK_ENDPOINT_ID": "we_1Ucx1ZHEzENMJ5rpKJzDWFWn",
+        "STRIPE_PRICE_TOPUP_10": "price_1UcwkjHEzENMJ5rpkgIMOa1Y",
+        "STRIPE_PRICE_PRO_PASS": "price_1UcwmNHEzENMJ5rpYF5tFfbq",
+        "STRIPE_PRICE_AGENCY_PASS": "price_1UcwnZHEzENMJ5rpkGvjqE2j",
+        "STRIPE_PAYMENT_LINK_TOPUP_10": "https://buy.stripe.com/test_dRmfZh1Y83Iggshaz4bEA00",
+        "STRIPE_PAYMENT_LINK_PRO_PASS": "https://buy.stripe.com/test_9B63cvgT2ceM0tjcHcbEA02",
+        "STRIPE_PAYMENT_LINK_AGENCY_PASS": "https://buy.stripe.com/test_14A5kD46gemUa3T0YubEA01"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "tollbooth-clearinghouse-local",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }

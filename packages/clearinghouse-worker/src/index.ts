@@ -20,9 +20,14 @@ export interface Env {
   FACILITATOR_HMAC_SECRET?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_CONNECT_WEBHOOK_SECRET?: string;
+  STRIPE_PUBLISHABLE_KEY?: string;
+  STRIPE_WEBHOOK_ENDPOINT_ID?: string;
   STRIPE_PRICE_TOPUP_10?: string;
   STRIPE_PRICE_PRO_PASS?: string;
   STRIPE_PRICE_AGENCY_PASS?: string;
+  STRIPE_PAYMENT_LINK_TOPUP_10?: string;
+  STRIPE_PAYMENT_LINK_PRO_PASS?: string;
+  STRIPE_PAYMENT_LINK_AGENCY_PASS?: string;
   PRO_PASS_URL?: string;
   ENVIRONMENT?: string;
 }
@@ -1177,9 +1182,18 @@ async function createTopupCheckoutInternal(
 
   const hasLiveOrTestStripeKey = Boolean(
     env.STRIPE_SECRET_KEY &&
-      env.STRIPE_SECRET_KEY.startsWith('sk_') &&
+      (env.STRIPE_SECRET_KEY.startsWith('sk_') || env.STRIPE_SECRET_KEY.startsWith('rk_')) &&
       !env.STRIPE_SECRET_KEY.includes('placeholder'),
   );
+
+  const paymentLinkBase =
+    body.passTier === 'pro'
+      ? env.STRIPE_PAYMENT_LINK_PRO_PASS
+      : body.passTier === 'agency'
+        ? env.STRIPE_PAYMENT_LINK_AGENCY_PASS
+        : amountMicros === 10_000_000
+          ? env.STRIPE_PAYMENT_LINK_TOPUP_10
+          : undefined;
 
   const successUrl = body.successUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=success';
   const cancelUrl = body.cancelUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=cancelled';
@@ -1247,6 +1261,26 @@ async function createTopupCheckoutInternal(
     };
   }
 
+  if (paymentLinkBase) {
+    const clientRef = body.walletId ?? body.developerId;
+    const checkoutUrl = clientRef
+      ? `${paymentLinkBase}${paymentLinkBase.includes('?') ? '&' : '?'}client_reference_id=${encodeURIComponent(clientRef)}`
+      : paymentLinkBase;
+    return {
+      status: 200,
+      payload: {
+        checkoutUrl,
+        paymentLinkUrl: paymentLinkBase,
+        sessionId: null,
+        amountMicros,
+        amountUsd: microsToUsdString(amountMicros),
+        kind,
+        productName,
+        mode: 'payment_link',
+      },
+    };
+  }
+
   const sandboxSessionId = `cs_sandbox_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
   return {
     status: 200,
@@ -1279,7 +1313,27 @@ async function handleWalletTopup(request: Request, env: Env): Promise<Response> 
   return jsonWithCors(result.payload, result.status);
 }
 
-function renderClearinghousePortalHtml(): string {
+function escapeHtmlAttr(val: string): string {
+  return val
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderClearinghousePortalHtml(env: Env): string {
+  const topupAction = env.STRIPE_PAYMENT_LINK_TOPUP_10
+    ? `<a class="btn" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
+    : `<button class="btn" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>`;
+
+  const proAction = env.STRIPE_PAYMENT_LINK_PRO_PASS
+    ? `<a class="btn" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_PRO_PASS)}" rel="noopener noreferrer">Unlock Pro Pass ($39)</a>`
+    : `<button class="btn" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Unlock Pro Pass ($39)</button>`;
+
+  const agencyAction = env.STRIPE_PAYMENT_LINK_AGENCY_PASS
+    ? `<a class="btn btn-secondary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_AGENCY_PASS)}" rel="noopener noreferrer">Agency Pass ($79)</a>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1350,6 +1404,12 @@ function renderClearinghousePortalHtml(): string {
       border: 0;
       cursor: pointer;
     }
+    .btn-secondary {
+      background: #1F2937;
+      color: #F9FAFB;
+      border: 1px solid var(--amber);
+      margin-top: 8px;
+    }
     .footer { margin-top: 24px; font-size: 13px; color: var(--muted); }
     a { color: #FBBF24; }
   </style>
@@ -1368,7 +1428,7 @@ function renderClearinghousePortalHtml(): string {
           <div class="price">$5 &middot; $10 &middot; $25</div>
           <p>Prepaid USD microdollar wallet issuing signed <code>rcs_receipt_...</code> tokens with atomic D1 nonce replay protection.</p>
         </div>
-        <button class="btn" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>
+        ${topupAction}
       </article>
       <article class="card">
         <div>
@@ -1376,7 +1436,10 @@ function renderClearinghousePortalHtml(): string {
           <div class="price">$39 / $79 one-time</div>
           <p>Drops clearinghouse fee from 7% to 3%, unlocks <code>upto</code> per-token metering, custom 402 pages, and spend caps.</p>
         </div>
-        <button class="btn" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Unlock Pro Pass ($39)</button>
+        <div>
+          ${proAction}
+          ${agencyAction}
+        </div>
       </article>
       <article class="card">
         <div>
@@ -1684,7 +1747,7 @@ export default {
 
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/pay')) {
         return withCors(
-          new Response(renderClearinghousePortalHtml(), {
+          new Response(renderClearinghousePortalHtml(env), {
             status: 200,
             headers: { 'Content-Type': 'text/html; charset=utf-8' },
           }),
