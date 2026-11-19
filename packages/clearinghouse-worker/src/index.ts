@@ -1753,11 +1753,6 @@ function renderSitemapXml(): string {
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://tollbooth.redcenterstudio.com/demo/402</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
     <loc>https://tollbooth.redcenterstudio.com/llms.txt</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>

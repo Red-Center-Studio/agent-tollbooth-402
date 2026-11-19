@@ -1150,7 +1150,8 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(sitemapRes.headers.get('Content-Type')).toContain('application/xml');
     const sitemapText = await sitemapRes.text();
     expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/pay');
-    expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/demo/402');
+    // The demo answers 402 on purpose, so search engines cannot index it: it stays out of the sitemap.
+    expect(sitemapText).not.toContain('https://tollbooth.redcenterstudio.com/demo/402');
     expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/llms.txt');
 
     for (const glamaPath of ['/.well-known/glama.json', '/mcp/.well-known/glama.json']) {
