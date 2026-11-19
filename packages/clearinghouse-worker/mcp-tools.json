@@ -24,13 +24,16 @@
           "description": "Estimated monthly paid API or MCP tool calls."
         }
       },
-      "required": ["priceMicros", "callsPerMonth"]
+      "required": [
+        "priceMicros",
+        "callsPerMonth"
+      ]
     }
   },
   {
     "name": "tollbooth_wallet_balance",
     "title": "Check Wallet Credit Balance",
-    "description": "Inspect an agent wallet credit balance, status, and remaining UTC daily spend cap. Read-only lookup.",
+    "description": "Inspect an agent wallet credit balance, status, and remaining UTC daily spend cap. Read-only. Needs the wallet key for that wallet (Authorization: Bearer rcs_wk_...).",
     "annotations": {
       "title": "Check Wallet Credit Balance",
       "readOnlyHint": true,
@@ -46,13 +49,15 @@
           "description": "Agent wallet identifier to inspect (e.g., wallet_demo)."
         }
       },
-      "required": ["walletId"]
+      "required": [
+        "walletId"
+      ]
     }
   },
   {
     "name": "tollbooth_issue_receipt",
     "title": "Issue Signed Bearer Receipt",
-    "description": "Issue a short-lived Rail B rcs_receipt_hs256 bearer authorization token against an existing prepaid credit balance. Does not move bank or crypto funds.",
+    "description": "Issue a short-lived Rail B rcs_receipt bearer token (Ed25519-signed, verifiable with /.well-known/tollbooth-jwks.json) that spends from an existing prepaid wallet balance. Needs the wallet key for that wallet. Does not move bank or crypto funds.",
     "annotations": {
       "title": "Issue Signed Bearer Receipt",
       "readOnlyHint": false,
@@ -86,7 +91,10 @@
         },
         "scheme": {
           "type": "string",
-          "enum": ["exact", "upto"],
+          "enum": [
+            "exact",
+            "upto"
+          ],
           "description": "Payment authorization scheme ('exact' fixed charge or 'upto' metered ceiling)."
         },
         "idempotencyKey": {
@@ -94,13 +102,18 @@
           "description": "Optional idempotency key to prevent duplicate debit charges on retries."
         }
       },
-      "required": ["walletId", "developerId", "audience", "amountMicros"]
+      "required": [
+        "walletId",
+        "developerId",
+        "audience",
+        "amountMicros"
+      ]
     }
   },
   {
     "name": "tollbooth_verify_x402",
     "title": "Verify x402 V2 Payment Header",
-    "description": "Verify an x402 V2 paymentPayload signature and expiry against paymentRequirements and replay records. Does not execute on-chain transfers.",
+    "description": "Verify an x402 V2 exact payment: EIP-712 TransferWithAuthorization signature recovered against the payer, USDC asset and network, recipient, amount, expiry and replay records. Read-only; does not execute on-chain transfers.",
     "annotations": {
       "title": "Verify x402 V2 Payment Header",
       "readOnlyHint": true,
@@ -124,7 +137,11 @@
           "description": "Accepted payment requirements object specifying amount, network, and payTo address."
         }
       },
-      "required": ["x402Version", "paymentPayload", "paymentRequirements"]
+      "required": [
+        "x402Version",
+        "paymentPayload",
+        "paymentRequirements"
+      ]
     }
   },
   {
@@ -156,10 +173,101 @@
         },
         "passTier": {
           "type": "string",
-          "enum": ["pro", "agency"],
+          "enum": [
+            "pro",
+            "agency"
+          ],
           "description": "One-time developer tier upgrade to unlock 3% clearinghouse fee."
         }
       }
+    }
+  },
+  {
+    "name": "tollbooth_register_wallet",
+    "title": "Register Agent Wallet",
+    "description": "Create an empty prepaid Fiat Agent Wallet and return its wallet ID and wallet key (shown once). Moves no money; fund it later with tollbooth_create_topup_checkout.",
+    "annotations": {
+      "title": "Register Agent Wallet",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "A name for the wallet, such as the agent it pays for."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Optional owner email for receipts and recovery."
+        },
+        "dailySpendCapUsd": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Daily spend cap in USD. Default 25."
+        }
+      }
+    }
+  },
+  {
+    "name": "tollbooth_ledger_history",
+    "title": "Ledger History",
+    "description": "List recent ledger entries (top-ups, charges, settlements) for a wallet or a developer account, newest first. Read-only. Needs that account's wallet or developer key.",
+    "annotations": {
+      "title": "Ledger History",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "walletId": {
+          "type": "string",
+          "description": "Wallet to list (use with a wallet key)."
+        },
+        "developerId": {
+          "type": "string",
+          "description": "Developer account to list (use with a developer key)."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Entries to return. Default 25."
+        }
+      }
+    }
+  },
+  {
+    "name": "tollbooth_pass_status",
+    "title": "Pass Status",
+    "description": "Show a developer account's tier (hybrid, pro or agency), its Fiat Agent Wallet fee rate and whether upto metering is on. Read-only. Needs the developer key.",
+    "annotations": {
+      "title": "Pass Status",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "developerId": {
+          "type": "string",
+          "description": "Developer account ID (dev_...)."
+        }
+      },
+      "required": [
+        "developerId"
+      ]
     }
   }
 ]

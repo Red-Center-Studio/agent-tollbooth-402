@@ -28,6 +28,40 @@ export const DEFAULT_NETWORK = 'eip155:8453';
 export const DEFAULT_USDC_BASE_ASSET = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 export const DEFAULT_EXEMPT_PATHS = ['/health', '/readyz', '/webhook/*'] as const;
 export const DEFAULT_CLOCK_SKEW_SECONDS = 30;
+export const DEFAULT_JWKS_URL = 'https://tollbooth.redcenterstudio.com/.well-known/tollbooth-jwks.json';
+
+/**
+ * EIP-712 domain of USDC per network. Payers sign with this name and version; a wrong name makes the USDC
+ * contract reject the transfer (Base mainnet USDC is "USD Coin", Base Sepolia USDC is "USDC").
+ */
+export const USDC_EIP712_DOMAINS: Record<string, { name: string; version: string }> = {
+  'eip155:8453': { name: 'USD Coin', version: '2' },
+  'eip155:84532': { name: 'USDC', version: '2' },
+};
+
+export function usdcEip712Extra(network: string): { name: string; version: string } {
+  return USDC_EIP712_DOMAINS[network] ?? { name: 'USD Coin', version: '2' };
+}
+
+/**
+ * Fetch the clearinghouse's Ed25519 receipt public key (the JWK `x`, base64url) for `fiatWallet.ed25519PublicKey`.
+ * Cache the result: the key changes only when the clearinghouse rotates it.
+ */
+export async function fetchTollboothPublicKey(
+  jwksUrl: string = DEFAULT_JWKS_URL,
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<string> {
+  const res = await fetchImpl(jwksUrl, { headers: { Accept: 'application/json' } });
+  if (!res.ok) {
+    throw new Error(`JWKS fetch failed with HTTP ${res.status}`);
+  }
+  const jwks = (await res.json()) as { keys?: Array<{ kty?: string; crv?: string; x?: string }> };
+  const key = jwks.keys?.find((k) => k.kty === 'OKP' && k.crv === 'Ed25519' && typeof k.x === 'string');
+  if (!key?.x) {
+    throw new Error('No Ed25519 key in JWKS');
+  }
+  return key.x;
+}
 export const DEFAULT_PRICE_USD = 0.01;
 export const SANDBOX_HMAC_SECRET = 'rcs_sandbox_local_dev_secret_32bytes_deterministic';
 
@@ -1393,10 +1427,7 @@ function buildPaymentRequiredChallenge(
         asset,
         payTo,
         maxTimeoutSeconds,
-        extra: {
-          name: 'USDC',
-          version: '2',
-        },
+        extra: usdcEip712Extra(network),
       },
     ],
     extensions,
@@ -1704,6 +1735,7 @@ async function evaluateTollboothRequest(
     payTo: expectedPayTo,
     resource: request.url,
     maxTimeoutSeconds: route.maxTimeoutSeconds ?? 60,
+    extra: usdcEip712Extra(expectedNetwork),
   };
 
   let verifyResp: Response;

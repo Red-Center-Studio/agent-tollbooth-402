@@ -16,11 +16,26 @@ import {
   type X402PaymentSignature,
 } from '@redcenterstudio/agent-tollbooth-edge';
 import MCP_TOOLS from '../mcp-tools.json';
+import { verifyEip3009 } from './evm.js';
+import {
+  bearerToken,
+  ledgerHistory,
+  receiptJwks,
+  receiptSigningKey,
+  registerDeveloper,
+  registerWallet,
+  resolveScopedKey,
+  rotateKey,
+  scopeAllows,
+  type Ed25519Env,
+  type KeyScope,
+} from './accounts.js';
+import { callUpstream, facilitatorFor, upstreamBody, type UpstreamEnv } from './upstream.js';
 
 export type DeveloperTier = 'free' | 'hybrid' | 'pro' | 'agency';
 export type SettlementRail = 'fiat_wallet' | 'x402';
 
-export interface Env {
+export interface Env extends UpstreamEnv, Ed25519Env {
   DB: D1Database;
   RECEIPT_SIGNING_SECRET: string;
   CLEARINGHOUSE_API_KEY: string;
@@ -39,6 +54,11 @@ export interface Env {
   STRIPE_PAYMENT_LINK_AGENCY_PASS?: string;
   PRO_PASS_URL?: string;
   ENVIRONMENT?: string;
+}
+
+/** Mock signatures and fake settlement hashes are accepted only in the test sandbox, never in production. */
+function isSandboxEnv(env: Env): boolean {
+  return env.ENVIRONMENT === 'test-sandbox' || env.ENVIRONMENT === 'development';
 }
 
 export interface FeeBreakdown {
@@ -197,7 +217,33 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
     case 'unauthorized':
       return {
         code: 'INVALID_SIGNATURE',
-        fix_hint: 'Supply a valid Authorization: Bearer <CLEARINGHOUSE_API_KEY> header.',
+        fix_hint: 'Supply Authorization: Bearer <key>, using the wallet or developer key issued at registration.',
+      };
+    case 'settlement_not_configured':
+      return {
+        code: 'FACILITATOR_ERROR',
+        fix_hint: 'On-chain settlement is not switched on for this network yet. Use Base Sepolia (eip155:84532) to test, or settle Base mainnet through your own facilitator.',
+      };
+    case 'upto_not_supported_onchain':
+      return {
+        code: 'INVALID_REQUEST',
+        fix_hint: 'x402 on-chain payments use the exact scheme (EIP-3009). Use exact, or the Fiat Agent Wallet rail for metered upto pricing.',
+      };
+    case 'unsupported_network':
+    case 'asset_mismatch':
+      return {
+        code: 'INVALID_REQUEST',
+        fix_hint: 'Pay in USDC on Base (eip155:8453) or Base Sepolia (eip155:84532), with the USDC contract address as asset.',
+      };
+    case 'smart_wallet_signature_needs_facilitator':
+      return {
+        code: 'INVALID_SIGNATURE',
+        fix_hint: 'Smart-contract wallet signatures are checked by the on-chain facilitator, which is not available for this network yet. Sign with an EOA wallet.',
+      };
+    case 'facilitator_settlement_failed':
+      return {
+        code: 'FACILITATOR_ERROR',
+        fix_hint: 'The on-chain transfer did not go through (often low USDC balance or an expired authorization). Nothing was charged; sign a new payment and retry.',
       };
     case 'insufficient_wallet_balance':
     case 'insufficient_balance_or_cap_exceeded':
@@ -262,6 +308,8 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
 
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
+  // Every authenticated call uses a bearer key, never cookies, so any origin may call (browser MCP inspectors, dashboards).
+  headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
   headers.set('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
   if (!headers.has('Access-Control-Allow-Methods')) {
@@ -351,6 +399,15 @@ async function isAuthorizedAdminRequest(request: Request, env: Env): Promise<boo
   return timingSafeEqualString(match[1], env.CLEARINGHOUSE_API_KEY);
 }
 
+/** Admin when the master key is presented, the wallet or developer for a scoped key, otherwise null. */
+async function requestScope(request: Request, env: Env): Promise<KeyScope | null> {
+  if (await isAuthorizedAdminRequest(request, env)) {
+    return { kind: 'admin' };
+  }
+  const token = bearerToken(request);
+  return token ? resolveScopedKey(env.DB, token) : null;
+}
+
 function utcDayString(nowSeconds: number): string {
   return new Date(nowSeconds * 1000).toISOString().slice(0, 10);
 }
@@ -382,6 +439,33 @@ async function verifyX402Signature(
   const sig = body.paymentPayload.payload.signature;
   if (typeof sig !== 'string' || sig.length === 0) {
     return { ok: false, reason: 'missing_signature' };
+  }
+
+  if (!isSandboxEnv(env)) {
+    const reqs = body.paymentRequirements;
+    if (reqs.scheme !== 'exact') {
+      return { ok: false, reason: 'upto_not_supported_onchain' };
+    }
+    const auth = body.paymentPayload.payload.authorization;
+    const check = verifyEip3009(reqs.network, reqs.asset, auth, sig);
+    if (check.ok) {
+      return { ok: true };
+    }
+    if (check.reason === 'smart_wallet_signature_needs_facilitator') {
+      const facilitator = facilitatorFor(reqs.network, env);
+      if (!facilitator) {
+        return { ok: false, reason: 'settlement_not_configured' };
+      }
+      const up = await callUpstream(
+        facilitator,
+        'verify',
+        upstreamBody({ ...reqs, signature: sig, authorization: { ...auth } }),
+      );
+      return up.ok && up.json.isValid === true
+        ? { ok: true }
+        : { ok: false, reason: String(up.json.invalidReason ?? 'signature_mismatch') };
+    }
+    return { ok: false, reason: check.reason };
   }
 
   if (sig.startsWith('hmac_sha256:')) {
@@ -618,6 +702,10 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  if (req.scheme === 'exact') {
+    // EIP-3009 moves exactly the authorized value on chain.
+    settleBig = authorizedBig;
+  }
   const grossMicros = Number(settleBig);
   if (!Number.isSafeInteger(grossMicros) || grossMicros < 0) {
     return jsonWithCors(
@@ -628,6 +716,20 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
         ...resolveClearinghouseGuidance('settle_amount_out_of_range'),
       },
       400,
+    );
+  }
+
+  const sandbox = isSandboxEnv(env);
+  const facilitator = sandbox ? null : facilitatorFor(req.network, env);
+  if (!sandbox && !facilitator) {
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'settlement_not_configured',
+        ...resolveClearinghouseGuidance('settlement_not_configured'),
+      },
+      503,
     );
   }
 
@@ -657,9 +759,38 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  const tier: DeveloperTier = verification.developer?.tier ?? 'free';
-  const feeBreakdown = calculateClearinghouseFee(grossMicros, tier, 'x402');
-  const txHash = await computeSettlementTxHash(`${auth.nonce}:${req.network}:${grossMicros}:${now}`);
+  // Rail A pays the developer's own wallet directly on chain, so the clearinghouse takes no fee.
+  const feeBreakdown = calculateClearinghouseFee(grossMicros, 'free', 'x402');
+  let txHash: string;
+  if (facilitator) {
+    const up = await callUpstream(
+      facilitator,
+      'settle',
+      upstreamBody({
+        network: req.network,
+        asset: req.asset,
+        amount: req.amount,
+        payTo: req.payTo,
+        maxTimeoutSeconds: req.maxTimeoutSeconds,
+        resource: req.resource,
+        signature: body.paymentPayload.payload.signature,
+        authorization: { ...auth },
+      }),
+    );
+    const tx = typeof up.json.transaction === 'string' ? up.json.transaction : '';
+    if (!up.ok || up.json.success !== true || !tx) {
+      // Nothing settled: free the nonce so the payer can retry. The USDC contract still refuses a reused nonce.
+      await env.DB.prepare('DELETE FROM used_nonces WHERE nonce = ?').bind(auth.nonce).run();
+      const reason = String(up.json.errorReason ?? 'facilitator_settlement_failed');
+      return jsonWithCors(
+        { success: false, txHash: null, errorReason: reason, ...resolveClearinghouseGuidance(reason) },
+        502,
+      );
+    }
+    txHash = tx;
+  } else {
+    txHash = await computeSettlementTxHash(`sandbox:${auth.nonce}:${req.network}:${grossMicros}:${now}`);
+  }
 
   await env.DB.prepare(
     'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -675,7 +806,7 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
       feeBreakdown.platformFeeMicros,
       feeBreakdown.developerNetMicros,
       txHash,
-      JSON.stringify({ network: req.network, payer: auth.from }),
+      JSON.stringify({ network: req.network, payer: auth.from, sandbox }),
       now,
     )
     .run();
@@ -687,6 +818,7 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     settledAmount: String(grossMicros),
     platformFeeMicros: feeBreakdown.platformFeeMicros,
     developerNetMicros: feeBreakdown.developerNetMicros,
+    ...(sandbox ? { sandbox: true } : {}),
     errorReason: null,
   });
 }
@@ -827,10 +959,12 @@ async function issueWalletReceiptInternal(
     tier: developer.tier,
   };
 
-  const receipt = await signFiatReceipt(claims, {
-    alg: 'hs256',
-    secret: env.RECEIPT_SIGNING_SECRET,
-  });
+  // Ed25519 when its key is set: merchants verify with the public key from /.well-known/tollbooth-jwks.json and
+  // never hold a secret that could mint receipts. HS256 stays as the fallback for self-hosted single-tenant setups.
+  const edKey = await receiptSigningKey(env);
+  const receipt = edKey
+    ? await signFiatReceipt(claims, { alg: 'ed25519', privateKey: edKey })
+    : await signFiatReceipt(claims, { alg: 'hs256', secret: env.RECEIPT_SIGNING_SECRET });
 
   const debitRes = await env.DB.prepare(
     `UPDATE agent_wallets
@@ -957,6 +1091,9 @@ interface StripeEvent {
     object?: {
       id?: string;
       amount_total?: number;
+      amount_subtotal?: number;
+      payment_status?: string;
+      client_reference_id?: string | null;
       metadata?: Record<string, string | undefined>;
     };
   };
@@ -1023,12 +1160,29 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
     return jsonWithCors({ received: true, idempotentReplay: true, eventId: event.id });
   }
 
-  if (event.type !== 'checkout.session.completed') {
+  if (event.type !== 'checkout.session.completed' && event.type !== 'checkout.session.async_payment_succeeded') {
     return jsonWithCors({ received: true, ignored: true, type: event.type });
   }
 
   const session = event.data?.object ?? {};
-  const meta = session.metadata ?? {};
+  // Bank debits and other delayed methods complete unpaid; they are fulfilled on async_payment_succeeded instead.
+  if (event.type === 'checkout.session.completed' && session.payment_status === 'unpaid') {
+    return jsonWithCors({ received: true, pending: true, sessionId: session.id ?? null });
+  }
+  const meta: Record<string, string | undefined> = { ...(session.metadata ?? {}) };
+  // Payment Links carry no metadata: recover the account from client_reference_id and the amount paid.
+  const clientRef = typeof session.client_reference_id === 'string' ? session.client_reference_id : '';
+  if (!meta.kind && !meta.wallet_id && !meta.developer_id && clientRef) {
+    if (clientRef.startsWith('wallet_')) {
+      meta.kind = 'wallet_topup';
+      meta.wallet_id = clientRef;
+    } else if (clientRef.startsWith('dev_')) {
+      const cents = Number(session.amount_subtotal ?? session.amount_total ?? 0);
+      meta.kind = 'tier_upgrade';
+      meta.developer_id = clientRef;
+      meta.target_tier = cents === 7900 ? 'agency' : cents === 3900 ? 'pro' : '';
+    }
+  }
   const now = Math.floor(Date.now() / 1000);
 
   if (meta.kind === 'tier_upgrade' && meta.developer_id) {
@@ -1212,8 +1366,15 @@ async function createTopupCheckoutInternal(
           ? env.STRIPE_PAYMENT_LINK_TOPUP_10
           : undefined;
 
-  const successUrl = body.successUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=success';
-  const cancelUrl = body.cancelUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=cancelled';
+  // Return only to this site, so a checkout link cannot be used to bounce buyers elsewhere.
+  const sameSite = (u: string | undefined): u is string =>
+    typeof u === 'string' && u.startsWith('https://tollbooth.redcenterstudio.com/');
+  const successUrl = sameSite(body.successUrl)
+    ? body.successUrl
+    : 'https://tollbooth.redcenterstudio.com/pay?status=success&session_id={CHECKOUT_SESSION_ID}';
+  const cancelUrl = sameSite(body.cancelUrl)
+    ? body.cancelUrl
+    : 'https://tollbooth.redcenterstudio.com/pay?status=cancelled';
 
   // Real money never moves unless the webhook can deliver what was bought. A Stripe Checkout Session carries the
   // wallet or developer id in its metadata; a hosted Payment Link carries none, so it stays behind PAID_SALES_OPEN.
@@ -1232,7 +1393,7 @@ async function createTopupCheckoutInternal(
       },
     };
   }
-  if (!hasLiveOrTestStripeKey && paymentLinkBase && !paidSalesOpen(env)) {
+  if (takesRealMoney && !paidSalesOpen(env)) {
     return {
       status: 409,
       payload: {
@@ -1241,6 +1402,19 @@ async function createTopupCheckoutInternal(
         fix_hint: 'Paid wallet top-ups and passes are not open yet. The sandbox and the free x402 rail work today.',
       },
     };
+  }
+
+  if (takesRealMoney && fulfilmentId) {
+    const found =
+      kind === 'tier_upgrade'
+        ? await env.DB.prepare('SELECT id FROM developers WHERE id = ? LIMIT 1').bind(fulfilmentId).first<{ id: string }>()
+        : await env.DB.prepare("SELECT id FROM agent_wallets WHERE id = ? AND status = 'active' LIMIT 1")
+            .bind(fulfilmentId)
+            .first<{ id: string }>();
+    if (!found) {
+      const reason = kind === 'tier_upgrade' ? 'developer_not_found' : 'wallet_not_found';
+      return { status: 404, payload: { error: reason, ...resolveClearinghouseGuidance(reason) } };
+    }
   }
 
   if (hasLiveOrTestStripeKey && env.STRIPE_SECRET_KEY) {
@@ -1257,6 +1431,9 @@ async function createTopupCheckoutInternal(
       form.set('line_items[0][price_data][unit_amount]', String(unitAmountCents));
       form.set('line_items[0][price_data][product_data][name]', productName);
       form.set('line_items[0][quantity]', '1');
+    }
+    if (fulfilmentId) {
+      form.set('client_reference_id', fulfilmentId);
     }
     form.set('metadata[kind]', kind);
     form.set('metadata[amount_micros]', String(amountMicros));
@@ -1507,6 +1684,11 @@ function renderLlmsTxt(): string {
     '- `/agent-tollbooth-402:install-tollbooth`: Inject zero-dependency dual-rail HTTP 402 middleware.',
     '- `/agent-tollbooth-402:test-agent`: Run a 30-second offline 402 challenge, receipt verification, and replay-guard smoke test.',
     '',
+    '## Install the Edge Middleware',
+    '```',
+    `npm install ${EDGE_TARBALL_URL}`,
+    '```',
+    '',
     '## Quick Edge Middleware Snippet',
     '```ts',
     "import { withTollbooth } from '@redcenterstudio/agent-tollbooth-edge';",
@@ -1519,10 +1701,19 @@ function renderLlmsTxt(): string {
     '## Remote MCP Tools',
     toolLines,
     '',
+    '## Accounts, Keys and Receipts',
+    '- Self-serve accounts: POST /wallet/register returns a wallet key (rcs_wk_...), POST /developer/register returns a developer key (rcs_dk_...). Keys are shown once; only hashes are stored. POST /keys/rotate replaces a key.',
+    '- A wallet key reads its own balance and ledger and requests receipts that spend from that wallet only.',
+    '- Rail B receipts are Ed25519-signed. Verify them with the public key at https://tollbooth.redcenterstudio.com/.well-known/tollbooth-jwks.json (fetchTollboothPublicKey() in the middleware).',
+    '',
+    '## x402 Settlement',
+    '- /verify recovers the EIP-712 TransferWithAuthorization signer and checks it is the payer, plus USDC asset, network, recipient, amount, expiry and replay.',
+    '- /settle submits the transfer through an on-chain facilitator: x402.org for Base Sepolia (eip155:84532); Base mainnet (eip155:8453) settles once a mainnet facilitator is configured, and is refused (never faked) until then.',
+    '',
     '## Clearinghouse Pricing',
     '- Free / BYO Crypto x402: $0 USD, 0% fee (100% net to your Base `payTo` wallet)',
     '- Hybrid Clearinghouse: $0/mo + 7% fee (93% net via Stripe-funded Fiat Agent Wallets)',
-    '- Tollbooth Pro Pass: $39 USD once (drops clearinghouse fee to 3%, unlocks `upto` per-token metering & custom 402 HTML)',
+    '- Tollbooth Pro Pass: $39 USD once (drops the Fiat Agent Wallet fee to 3%, unlocks `upto` per-token metering on that rail & custom 402 HTML)',
     '- Agency Pass: $79 USD once (multi-project 3% clearinghouse fee)',
     '- Done-For-You Setup: From $499 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
     '',
@@ -1537,7 +1728,7 @@ function renderWellKnownMcpManifest(): Record<string, unknown> {
     $schema: 'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json',
     name: 'io.github.Red-Center-Studio/agent-tollbooth-402',
     title: 'Agent Tollbooth 402',
-    version: '1.0.0',
+    version: '1.1.0',
     description:
       'HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and Stripe top-ups for APIs & MCP.',
     websiteUrl: 'https://tollbooth.redcenterstudio.com/pay',
@@ -1575,19 +1766,90 @@ function renderSitemapXml(): string {
 `;
 }
 
-function renderClearinghousePortalHtml(env: Env): string {
+/** The edge middleware as a release tarball: plain `npm install <url>` works without a registry account. */
+export const EDGE_TARBALL_URL =
+  'https://github.com/Red-Center-Studio/agent-tollbooth-402/releases/download/v1.1.0/redcenterstudio-agent-tollbooth-edge-1.1.0.tgz';
+
+/** The banner shown when a buyer returns from Stripe, or null. Built from query params and the ledger only. */
+async function portalNotice(url: URL, env: Env): Promise<{ tone: 'ok' | 'info'; text: string } | null> {
+  const status = url.searchParams.get('status');
+  if (url.searchParams.get('sandbox_session')) {
+    return { tone: 'info', text: 'Sandbox checkout: no real payment was taken. Use a real Stripe key to test the full flow.' };
+  }
+  if (status === 'cancelled') {
+    return { tone: 'info', text: 'Checkout cancelled. Nothing was charged.' };
+  }
+  if (status !== 'success') {
+    return null;
+  }
+  const sessionId = url.searchParams.get('session_id') ?? '';
+  if (/^cs_[A-Za-z0-9_]{8,200}$/.test(sessionId)) {
+    const row = await env.DB.prepare(
+      "SELECT wallet_id, gross_micros FROM ledger_entries WHERE tx_reference = ? AND entry_type = 'topup' LIMIT 1",
+    )
+      .bind(sessionId)
+      .first<{ wallet_id: string; gross_micros: number }>();
+    if (row) {
+      return {
+        tone: 'ok',
+        text: `Payment received: $${(row.gross_micros / 1_000_000).toFixed(2)} USD added to ${row.wallet_id}.`,
+      };
+    }
+  }
+  return {
+    tone: 'ok',
+    text: 'Payment received. Your top-up or pass is applied within a minute. Check it with your wallet or developer key.',
+  };
+}
+
+function renderClearinghousePortalHtml(
+  env: Env,
+  notice: { tone: 'ok' | 'info'; text: string } | null = null,
+): string {
   // Buy buttons show only when a purchase can be delivered: sales are open, or this is a sandbox with no Stripe key.
   const showBuy = paidSalesOpen(env) || (!hasRealStripeKey(env) && !env.STRIPE_PAYMENT_LINK_TOPUP_10);
   const closedNote = '<span class="btn btn-ghost" aria-disabled="true">Opens soon</span>';
-  const topupAction = !showBuy ? closedNote : env.STRIPE_PAYMENT_LINK_TOPUP_10
+  // With sales open and a real Stripe key, the buttons lead to the account form, which starts a Checkout Session
+  // that carries the wallet or developer id, so every payment can be credited.
+  const liveBuy = paidSalesOpen(env) && hasRealStripeKey(env);
+  const noticeHtml = notice
+    ? `<div class="tb-notice tb-${notice.tone}" role="status"><div class="wrap">${escapeHtmlAttr(notice.text)}</div></div>`
+    : '';
+  const buyPanel = liveBuy
+    ? `<section id="buy" style="padding-top:0">
+      <div class="wrap narrow">
+        <span class="label">Buy</span>
+        <h2>Fund a wallet or buy a pass.</h2>
+        <div class="grid g2">
+          <form class="card tb-form" data-kind="topup">
+            <h3>Agent wallet top-up</h3>
+            <label>Wallet ID <input name="account" placeholder="wallet_..." autocomplete="off" pattern="wallet_[0-9a-f]{20}"></label>
+            <button class="btn btn-ghost" type="button" data-register="wallet">No wallet yet? Create one</button>
+            <button class="btn btn-primary" type="submit">Pay $10 USD</button>
+          </form>
+          <form class="card tb-form" data-kind="pass">
+            <h3>Pro or Agency pass</h3>
+            <label>Developer ID <input name="account" placeholder="dev_..." autocomplete="off" pattern="dev_[0-9a-f]{20}"></label>
+            <label>Email <input name="email" type="email" autocomplete="email"></label>
+            <label>Name <input name="owner" autocomplete="name"></label>
+            <button class="btn btn-ghost" type="button" data-register="developer">No account yet? Create one</button>
+            <label>Pass <select name="tier"><option value="pro">Pro &middot; $39 once</option><option value="agency">Agency &middot; $79 once</option></select></label>
+            <button class="btn btn-primary" type="submit">Buy pass</button>
+          </form>
+        </div>
+        <p class="tb-out" id="tb-out" role="status"></p>
+      </div>
+    </section>`
+    : '';
+  const topupAction = !showBuy ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Fund Agent Wallet ($10)</a>' : env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
     : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>`;
 
-  const proAction = !showBuy ? closedNote : env.STRIPE_PAYMENT_LINK_PRO_PASS
+  const proAction = !showBuy ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Buy Pro Pass &middot; $39</a>' : env.STRIPE_PAYMENT_LINK_PRO_PASS
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_PRO_PASS)}" rel="noopener noreferrer">Buy Pro Pass &middot; $39</a>`
     : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Buy Pro Pass &middot; $39</button>`;
 
-  const agencyAction = !showBuy ? '' : env.STRIPE_PAYMENT_LINK_AGENCY_PASS
+  const agencyAction = !showBuy ? '' : liveBuy ? '<a class="btn btn-ghost" href="#buy">Agency Pass &middot; $79</a>' : env.STRIPE_PAYMENT_LINK_AGENCY_PASS
     ? `<a class="btn btn-ghost" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_AGENCY_PASS)}" rel="noopener noreferrer">Agency Pass &middot; $79</a>`
     : '';
 
@@ -1679,6 +1941,13 @@ function renderClearinghousePortalHtml(env: Env): string {
     .btn-primary { background: var(--ochre); color: #1e1412; }
     .btn-primary:hover { background: var(--spinifex); }
     .btn-ghost { background: transparent; color: var(--ink); border-color: var(--ink); }
+    .tb-notice { padding: 14px 0; font-weight: 600; }
+    .tb-ok { background: #e3f0e1; color: #1d3b1a; }
+    .tb-info { background: #f3e6cf; color: #4a3210; }
+    .tb-form { display: flex; flex-direction: column; gap: 10px; }
+    .tb-form label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; }
+    .tb-form input, .tb-form select { font: inherit; padding: 8px 10px; border: 1px solid var(--ink); border-radius: 6px; background: #fff; min-width: 0; }
+    .tb-out { white-space: pre-wrap; word-break: break-all; margin-top: 16px; }
     .btn-ghost:hover { background: var(--ink); color: var(--sand); }
     .dark .btn-ghost { color: var(--on-dark); border-color: rgba(243, 233, 222, 0.55); }
     .dark .btn-ghost:hover { background: var(--on-dark); color: var(--ironstone); }
@@ -2087,6 +2356,7 @@ function renderClearinghousePortalHtml(env: Env): string {
   </header>
 
   <main id="main">
+    ${noticeHtml}
     <div class="hero dark has-proof">
       <div class="wrap">
         <nav class="crumbs" aria-label="Breadcrumb">
@@ -2293,6 +2563,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         </div>
       </div>
     </section>
+    ${buyPanel}
 
     <section id="connect" style="padding-top:0">
       <div class="wrap">
@@ -2326,7 +2597,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             <span class="label">Edge Middleware</span>
             <h3>Workers / Hono / Next.js</h3>
             <div class="code-box">
-              <pre tabindex="0"><code id="cmd-npm">npm install github:Red-Center-Studio/agent-tollbooth-402</code></pre>
+              <pre tabindex="0"><code id="cmd-npm">npm install ${EDGE_TARBALL_URL}</code></pre>
               <button class="btn btn-ghost copy-btn" type="button" data-copy="cmd-npm">Copy</button>
             </div>
           </div>
@@ -2384,6 +2655,31 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
                 <td>MCP Tool</td>
                 <td><code>tollbooth_create_topup_checkout</code></td>
                 <td>Create a Stripe Checkout / Payment Link URL for Wallet Top-Ups or Pro/Agency Passes.</td>
+              </tr>
+              <tr>
+                <td>MCP Tool</td>
+                <td><code>tollbooth_register_wallet</code></td>
+                <td>Create an empty agent wallet and its wallet key (shown once).</td>
+              </tr>
+              <tr>
+                <td>MCP Tool</td>
+                <td><code>tollbooth_ledger_history</code></td>
+                <td>Recent top-ups, charges and settlements for a wallet or developer account.</td>
+              </tr>
+              <tr>
+                <td>MCP Tool</td>
+                <td><code>tollbooth_pass_status</code></td>
+                <td>A developer account's tier, fee rate and metering access.</td>
+              </tr>
+              <tr>
+                <td>HTTP</td>
+                <td><code>POST /wallet/register</code>, <code>POST /developer/register</code>, <code>POST /keys/rotate</code></td>
+                <td>Self-serve accounts with scoped keys. Only key hashes are stored.</td>
+              </tr>
+              <tr>
+                <td>HTTP</td>
+                <td><code>GET /.well-known/tollbooth-jwks.json</code></td>
+                <td>Ed25519 public key for verifying Rail B receipts without any shared secret.</td>
               </tr>
               <tr>
                 <td>HTTP Edge</td>
@@ -2458,6 +2754,32 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
   </footer>
 
   <script>
+  (() => {
+    const out = document.getElementById('tb-out');
+    if (!out) return;
+    const post = async (path, body) => {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return [r.ok, await r.json().catch(() => ({}))];
+    };
+    document.querySelectorAll('[data-register]').forEach((b) => b.addEventListener('click', async () => {
+      const form = b.closest('form');
+      const isWallet = b.dataset.register === 'wallet';
+      const body = isWallet ? {} : { email: form.elements.email.value, name: form.elements.owner.value };
+      const [ok, j] = await post(isWallet ? '/wallet/register' : '/developer/register', body);
+      if (!ok) { out.textContent = j.fix_hint || 'Could not create the account.'; return; }
+      form.elements.account.value = isWallet ? j.walletId : j.developerId;
+      out.textContent = (isWallet ? 'Wallet ' + j.walletId + '. Wallet key (shown once, save it now): ' + j.walletKey
+        : 'Developer ' + j.developerId + '. Developer key (shown once, save it now): ' + j.developerKey);
+    }));
+    document.querySelectorAll('.tb-form').forEach((form) => form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = form.elements.account.value.trim();
+      const body = form.dataset.kind === 'topup' ? { walletId: id, amountUsd: 10 } : { developerId: id, passTier: form.elements.tier.value };
+      const [ok, j] = await post('/wallet/topup', body);
+      if (ok && j.checkoutUrl) { location.href = j.checkoutUrl; return; }
+      out.textContent = j.fix_hint || 'Checkout did not open. Please try again.';
+    }));
+  })();
     (function () {
       var menuBtn = document.querySelector('.menu-btn');
       var nav = document.getElementById('site-nav');
@@ -2491,7 +2813,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         {
           badge: 'Step 4 \\u00b7 <1ms Edge Settlement',
           challenge: false,
-          code: 'Authorization: Bearer rcs_receipt_live_8f92...\\n-> Web Crypto HMAC-SHA256 verified in 0.4ms\\n-> D1 used_nonces replay protection committed\\n\\nHTTP/1.1 200 OK  |  PAYMENT-RESPONSE: { "success": true }',
+          code: 'Authorization: Bearer rcs_receipt_live_8f92...\\n-> Web Crypto Ed25519 verified in 0.4ms\\n-> D1 used_nonces replay protection committed\\n\\nHTTP/1.1 200 OK  |  PAYMENT-RESPONSE: { "success": true }',
           caption: 'Signed receipts verify locally at the edge and block replay attacks automatically.'
         }
       ];
@@ -2582,14 +2904,9 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
 }
 
 async function handleIssueReceipt(request: Request, env: Env): Promise<Response> {
-  if (!(await isAuthorizedAdminRequest(request, env))) {
-    return jsonWithCors(
-      {
-        error: 'unauthorized',
-        ...resolveClearinghouseGuidance('unauthorized'),
-      },
-      401,
-    );
+  const scope = await requestScope(request, env);
+  if (!scope) {
+    return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 401);
   }
 
   let body: IssueReceiptBody;
@@ -2603,6 +2920,11 @@ async function handleIssueReceipt(request: Request, env: Env): Promise<Response>
       },
       400,
     );
+  }
+
+  // A wallet key may only spend from its own wallet.
+  if (!scopeAllows(scope, { walletId: body?.walletId })) {
+    return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 403);
   }
 
   const idempotencyKey = request.headers.get('Idempotency-Key') ?? `rcpt_${crypto.randomUUID()}`;
@@ -2680,7 +3002,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       },
       serverInfo: {
         name: 'agent-tollbooth-402-clearinghouse',
-        version: '1.0.0',
+        version: '1.1.0',
       },
     });
   }
@@ -2751,9 +3073,54 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       });
     }
 
+    if (toolName === 'tollbooth_register_wallet') {
+      const out = await registerWallet(env.DB, args);
+      return jsonRpcOk(rpc.id, {
+        isError: out.status >= 400,
+        content: [{ type: 'text', text: JSON.stringify(out.payload) }],
+        structuredContent: out.payload,
+      });
+    }
+
+    if (toolName === 'tollbooth_ledger_history' || toolName === 'tollbooth_pass_status') {
+      const scope = await requestScope(request, env);
+      const walletId = typeof args.walletId === 'string' ? args.walletId : undefined;
+      const developerId = typeof args.developerId === 'string' ? args.developerId : undefined;
+      const target =
+        toolName === 'tollbooth_pass_status' ? { developerId } : walletId ? { walletId } : { developerId };
+      if (!scopeAllows(scope, target)) {
+        return jsonRpcErr(rpc.id, -32001, 'Unauthorized: send Authorization: Bearer <wallet or developer key> for this account', 401);
+      }
+      let out: { status: number; payload: Record<string, unknown> };
+      if (toolName === 'tollbooth_ledger_history') {
+        out = await ledgerHistory(env.DB, target, args.limit);
+      } else {
+        const dev = await env.DB.prepare('SELECT id, tier FROM developers WHERE id = ? LIMIT 1')
+          .bind(developerId)
+          .first<{ id: string; tier: DeveloperTier }>();
+        out = dev
+          ? {
+              status: 200,
+              payload: {
+                developerId: dev.id,
+                tier: dev.tier,
+                fiatWalletFeeBps: dev.tier === 'pro' || dev.tier === 'agency' ? 300 : dev.tier === 'hybrid' ? 700 : null,
+                uptoMetering: dev.tier === 'pro' || dev.tier === 'agency',
+              },
+            }
+          : { status: 404, payload: { error: 'developer_not_found', ...resolveClearinghouseGuidance('developer_not_found') } };
+      }
+      return jsonRpcOk(rpc.id, {
+        isError: out.status >= 400,
+        content: [{ type: 'text', text: JSON.stringify(out.payload) }],
+        structuredContent: out.payload,
+      });
+    }
+
     if (toolName === 'tollbooth_wallet_balance' || toolName === 'tollbooth_issue_receipt') {
-      if (!(await isAuthorizedAdminRequest(request, env))) {
-        return jsonRpcErr(rpc.id, -32001, 'Unauthorized: Bearer CLEARINGHOUSE_API_KEY required', 401);
+      const scope = await requestScope(request, env);
+      if (!scopeAllows(scope, { walletId: typeof args.walletId === 'string' ? args.walletId : undefined })) {
+        return jsonRpcErr(rpc.id, -32001, 'Unauthorized: send Authorization: Bearer <wallet key> for this wallet', 401);
       }
 
       if (toolName === 'tollbooth_wallet_balance') {
@@ -2816,7 +3183,7 @@ export default {
 
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/pay')) {
         return withCors(
-          new Response(renderClearinghousePortalHtml(env), {
+          new Response(renderClearinghousePortalHtml(env, await portalNotice(url, env)), {
             status: 200,
             headers: { 'Content-Type': 'text/html; charset=utf-8' },
           }),
@@ -2851,7 +3218,7 @@ export default {
         return jsonWithCors({
           status: 'ok',
           service: 'agent-tollbooth-402-clearinghouse',
-          version: '1.0.0',
+          version: '1.1.0',
           timestamp: Math.floor(Date.now() / 1000),
         });
       }
@@ -2923,6 +3290,46 @@ export default {
         return handleIssueReceipt(request, env);
       }
 
+      if (request.method === 'GET' && url.pathname === '/.well-known/tollbooth-jwks.json') {
+        return withCors(
+          Response.json(await receiptJwks(env), { headers: { 'Cache-Control': 'public, max-age=300' } }),
+        );
+      }
+
+      if (request.method === 'POST' && (url.pathname === '/wallet/register' || url.pathname === '/developer/register')) {
+        let body: Record<string, unknown> = {};
+        try {
+          body = (await request.json()) as Record<string, unknown>;
+        } catch {
+          return jsonWithCors({ error: 'invalid_json', ...resolveClearinghouseGuidance('invalid_json') }, 400);
+        }
+        const out =
+          url.pathname === '/wallet/register' ? await registerWallet(env.DB, body) : await registerDeveloper(env.DB, body);
+        return jsonWithCors(out.payload, out.status);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/keys/rotate') {
+        const token = bearerToken(request);
+        const scope = token ? await resolveScopedKey(env.DB, token) : null;
+        if (!token || !scope) {
+          return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 401);
+        }
+        const out = await rotateKey(env.DB, token, scope);
+        return jsonWithCors(out.payload, out.status);
+      }
+
+      if (request.method === 'GET' && (url.pathname === '/wallet/ledger' || url.pathname === '/developer/ledger')) {
+        const scope = await requestScope(request, env);
+        const own = scope?.kind === 'wallet' ? scope.walletId : scope?.kind === 'developer' ? scope.developerId : '';
+        const id = url.searchParams.get('id') ?? own;
+        const target = url.pathname === '/wallet/ledger' ? { walletId: id } : { developerId: id };
+        if (!scopeAllows(scope, target)) {
+          return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 401);
+        }
+        const out = await ledgerHistory(env.DB, target, url.searchParams.get('limit'));
+        return jsonWithCors(out.payload, out.status);
+      }
+
       if (request.method === 'POST' && url.pathname === '/wallet/topup') {
         return handleWalletTopup(request, env);
       }
@@ -2936,7 +3343,7 @@ export default {
           error: 'not_found',
           code: 'NOT_FOUND',
           fix_hint:
-            'Supported routes: GET /, GET /pay, GET /demo/402, GET /health, GET /llms.txt, GET /.well-known/mcp.json, GET /robots.txt, GET /sitemap.xml, POST /verify, POST /settle, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
+            'Supported routes: GET /, GET /pay, GET /demo/402, GET /health, GET /llms.txt, GET /.well-known/mcp.json, GET /robots.txt, GET /sitemap.xml, GET /.well-known/tollbooth-jwks.json, POST /verify, POST /settle, POST /wallet/register, POST /developer/register, POST /keys/rotate, GET /wallet/ledger, GET /developer/ledger, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
         },
         404,
       );
@@ -2950,5 +3357,11 @@ export default {
         500,
       );
     }
+  },
+
+  /** Hourly: drop spent nonces whose authorization or receipt has expired (an expired one is refused anyway). */
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const cutoff = Math.floor(Date.now() / 1000) - 3600;
+    await env.DB.prepare('DELETE FROM used_nonces WHERE expires_at < ?').bind(cutoff).run();
   },
 };

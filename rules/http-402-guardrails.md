@@ -17,7 +17,7 @@ Apply these mandatory engineering rules whenever modifying HTTP 402 paywalls, x4
 - Never compare API secrets, webhook secrets, or HMAC tags with `===` / `!==`; compare fixed-length SHA-256 HMAC digests in constant time.
 
 ## 3. Nonce Replay Protection & Short TTL
-- Every Rail B receipt (`jti`) and Rail A x402 V2 authorization (`nonce`) MUST enforce a short expiration (`exp` / `validBefore`, recommended `<= 300s` for edge receipts and `<= 60s` for x402 challenges) with bounded clock skew (`<= 5s`).
+- Every Rail B receipt (`jti`) and Rail A x402 V2 authorization (`nonce`) MUST enforce a short expiration (`exp` / `validBefore`, recommended `<= 300s` for edge receipts and `<= 60s` for x402 challenges) with bounded clock skew (`<= 30s`, the middleware default `DEFAULT_CLOCK_SKEW_SECONDS`).
 - Consume nonces atomically in `used_nonces` (`PRIMARY KEY` / `INSERT OR IGNORE ...` checking `changes === 1`) **before** executing metered/paid business logic. Reject duplicates with `402` (`nonce_replayed`) or `409` on `/settle`.
 
 ## 4. Downstream-Safe Idempotency

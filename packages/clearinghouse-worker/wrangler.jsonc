@@ -9,6 +9,9 @@
       "enabled": true
     }
   },
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
   "routes": [
     {
       "pattern": "tollbooth.redcenterstudio.com",
@@ -18,7 +21,7 @@
   "vars": {
     "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pay",
     "ENVIRONMENT": "production",
-    "STRIPE_PUBLISHABLE_KEY": "pk_live_placeholder_copy_from_stripe_dashboard",
+    "PAID_SALES_OPEN": "false",
     "STRIPE_WEBHOOK_ENDPOINT_ID": "we_1UcxFBHEzENMJ5rpKmaaJeGp",
     "STRIPE_PRICE_TOPUP_10": "price_1UcxIZHEzENMJ5rpmbOcFzrV",
     "STRIPE_PRICE_PRO_PASS": "price_1UcxKKHEzENMJ5rpCd2Sl0Sw",

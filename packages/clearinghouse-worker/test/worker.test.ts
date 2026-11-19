@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { createSqliteD1, MIGRATION_SQL } from './sqlite-d1.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import worker, {
@@ -16,10 +17,6 @@ import {
 } from '@redcenterstudio/agent-tollbooth-edge';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATION_SQL = readFileSync(
-  path.resolve(__dirname, '../migrations/0001_init.sql'),
-  'utf8',
-);
 
 const TEST_ENV_SECRETS = {
   RECEIPT_SIGNING_SECRET: 'rcs_test_hmac_secret_value_not_for_production',
@@ -32,101 +29,6 @@ const mockCtx = {
   waitUntil: vi.fn(),
   passThroughOnException: vi.fn(),
 } as unknown as ExecutionContext;
-
-function createSqliteD1(migrationSql: string): { d1: D1Database; raw: DatabaseSync } {
-  const raw = new DatabaseSync(':memory:');
-  raw.exec('PRAGMA foreign_keys = ON;');
-  raw.exec(migrationSql);
-
-  const buildStmt = (query: string) => {
-    let bound: Array<string | number | bigint | Uint8Array | null> = [];
-    const stmt: D1PreparedStatement = {
-      bind(...values: unknown[]) {
-        bound = values.map((v) =>
-          v === undefined ? null : (v as string | number | bigint | Uint8Array | null),
-        );
-        return stmt;
-      },
-      async first<T = unknown>(colName?: string): Promise<T | null> {
-        const row = raw.prepare(query).get(...bound) as Record<string, unknown> | undefined;
-        if (!row) {
-          return null;
-        }
-        if (colName !== undefined) {
-          return (row[colName] ?? null) as T | null;
-        }
-        return row as unknown as T;
-      },
-      async run<T = Record<string, unknown>>() {
-        const info = raw.prepare(query).run(...bound);
-        return {
-          results: [] as T[],
-          success: true,
-          meta: {
-            duration: 0,
-            size_after: 0,
-            rows_read: 0,
-            rows_written: Number(info.changes),
-            last_row_id: Number(info.lastInsertRowid),
-            changed_db: Number(info.changes) > 0,
-            changes: Number(info.changes),
-          },
-        };
-      },
-      async all<T = Record<string, unknown>>() {
-        const rows = raw.prepare(query).all(...bound) as T[];
-        return {
-          results: rows,
-          success: true,
-          meta: {
-            duration: 0,
-            size_after: 0,
-            rows_read: rows.length,
-            rows_written: 0,
-            last_row_id: 0,
-            changed_db: false,
-            changes: 0,
-          },
-        };
-      },
-      raw: (async <T = unknown[]>(options?: { columnNames?: boolean }) => {
-        const rows = raw.prepare(query).all(...bound) as Array<Record<string, unknown>>;
-        const values = rows.map((r) => Object.values(r)) as T[];
-        if (options?.columnNames) {
-          const cols = rows[0] ? Object.keys(rows[0]) : [];
-          return [cols, ...values] as [string[], ...T[]];
-        }
-        return values;
-      }) as D1PreparedStatement['raw'],
-    };
-    return stmt;
-  };
-
-  const d1 = {
-    prepare(query: string) {
-      return buildStmt(query);
-    },
-    async batch<T = unknown>(statements: D1PreparedStatement[]) {
-      const results = [];
-      for (const s of statements) {
-        results.push(await s.all<T>());
-      }
-      return results;
-    },
-    async exec(query: string) {
-      raw.exec(query);
-      return { count: 1, duration: 0 };
-    },
-    withSession() {
-      return d1 as unknown as D1DatabaseSession;
-    },
-    async dump() {
-      return new ArrayBuffer(0);
-    },
-  } as unknown as D1Database;
-
-  return { d1, raw };
-}
 
 function seedFixtures(raw: DatabaseSync) {
   const now = Math.floor(Date.now() / 1000);
@@ -283,9 +185,11 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     const sqlite = createSqliteD1(MIGRATION_SQL);
     raw = sqlite.raw;
     seedFixtures(raw);
+    // The legacy flows below use mock signatures, which only the test sandbox accepts.
     env = {
       DB: sqlite.d1,
       ...TEST_ENV_SECRETS,
+      ENVIRONMENT: 'test-sandbox',
     };
   });
 
@@ -592,8 +496,9 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(settle1Json).toMatchObject({
       success: true,
       settledAmount: '20000',
-      platformFeeMicros: 600,
-      developerNetMicros: 19_400,
+      // Rail A pays the developer's wallet directly: no clearinghouse fee.
+      platformFeeMicros: 0,
+      developerNetMicros: 20_000,
     });
     expect(settle1Json.txHash).toMatch(/^0x[0-9a-f]{64}$/);
 
@@ -710,6 +615,9 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       'tollbooth_issue_receipt',
       'tollbooth_verify_x402',
       'tollbooth_create_topup_checkout',
+      'tollbooth_register_wallet',
+      'tollbooth_ledger_history',
+      'tollbooth_pass_status',
     ]);
 
     const quoteRes = await worker.fetch(
@@ -1223,7 +1131,7 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       transport: 'streamable-http',
       endpoint: 'https://tollbooth.redcenterstudio.com/mcp',
     });
-    expect(wellKnownJson.tools).toHaveLength(5);
+    expect(wellKnownJson.tools).toHaveLength(8);
 
     const robotsRes = await worker.fetch(
       new Request('https://tollbooth.redcenterstudio.com/robots.txt'),
