@@ -55,8 +55,8 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "tollbooth-clearinghouse",
-          "database_id": "e703786a-9bf7-4f00-adb1-b90cad5702d1",
+          "database_name": "tollbooth-clearinghouse-test",
+          "database_id": "9b7280c4-e7a5-4a61-aade-1911065f809c",
           "migrations_dir": "migrations"
         }
       ]
