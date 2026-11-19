@@ -44,7 +44,7 @@ Never propose `402` gating on `OPTIONS` preflight, `/health`, `/readyz`, `/webho
 | **Free / BYO x402 Mode** | `$0` | `0%` | Unlimited `/scan-routes`, local middleware injection, `/test-agent` simulator with any x402 facilitator (`exact`). |
 | **Hybrid Fiat + x402 Clearinghouse** | `$0/mo` | `7%` | Stripe-funded Fiat Agent Wallets (`rcs_receipt_...` `<1ms` verification) + automated Stripe Connect payouts (`tollbooth.redcenterstudio.com`). |
 | **Tollbooth Pro Pass** | `$39` one-time (`$79` Agency) | `3%` | Drops fee to `3%`, unlocks `upto` dynamic metering, custom HTML 402 pages, and per-agent spend caps. |
-| **Done-For-You Integration** | From `$399` | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping by Red Center Studio (`https://redcenterstudio.com`). |
+| **Done-For-You Integration** | From `$499` | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping by Red Center Studio (`https://redcenterstudio.com`). |
 
 ## Step 4: Uniform Markdown Output Format
 

@@ -1085,7 +1085,36 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       STRIPE_PAYMENT_LINK_TOPUP_10: 'https://buy.stripe.com/test_topup10',
       STRIPE_PAYMENT_LINK_PRO_PASS: 'https://buy.stripe.com/test_pro39',
       STRIPE_PAYMENT_LINK_AGENCY_PASS: 'https://buy.stripe.com/test_agency79',
+      PAID_SALES_OPEN: 'true',
     };
+
+    // Sales closed (the default): no payment link is shown or returned, and a checkout with no account id is refused.
+    const envClosed: Env = { ...envWithLinks, PAID_SALES_OPEN: undefined };
+    const closedPortalHtml = await (
+      await worker.fetch(new Request('https://tollbooth.redcenterstudio.com/pay'), envClosed, mockCtx)
+    ).text();
+    expect(closedPortalHtml).not.toContain('buy.stripe.com');
+    expect(closedPortalHtml).toContain('Opens soon');
+    const closedTopupRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/wallet/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletId: 'wallet_main', amountUsd: 10 }),
+      }),
+      envClosed,
+      mockCtx,
+    );
+    expect(closedTopupRes.status).toBe(409);
+    const anonTopupRes = await worker.fetch(
+      new Request('https://tollbooth.redcenterstudio.com/wallet/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountUsd: 10 }),
+      }),
+      envWithLinks,
+      mockCtx,
+    );
+    expect(anonTopupRes.status).toBe(400);
 
     const linkTopupRes = await worker.fetch(
       new Request('https://tollbooth.redcenterstudio.com/wallet/topup', {
@@ -1128,7 +1157,7 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(portalWithLinksHtml).toContain('Free / BYO Crypto x402');
     expect(portalWithLinksHtml).toContain('7% fee');
     expect(portalWithLinksHtml).toContain('3% fee');
-    expect(portalWithLinksHtml).toContain('From $399');
+    expect(portalWithLinksHtml).toContain('From $499');
     expect(portalWithLinksHtml).toContain('@media (max-width: 640px)');
 
     // 6) GET /demo/402 renders mobile-ready HTML 402 checkout card & JSON challenge

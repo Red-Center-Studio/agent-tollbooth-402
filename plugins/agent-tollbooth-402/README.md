@@ -28,7 +28,7 @@ Built by [Red Center Studio](https://redcenterstudio.com) · [Portal & Documenta
 | **Free / BYO Crypto (`x402 V2`)** | **`0%` fee** (`100%` net) | Self-serve `payTo` USDC wallet on Base (`eip155:8453`), unlimited `/agent-tollbooth-402:scan-routes` & sandbox testing |
 | **Hybrid Clearinghouse** | **`7%` fee** (`93%` net) | Hosted Stripe checkout links (`$10+`) and `<1ms` prepaid Fiat Agent Wallets |
 | **Tollbooth Pro (`$39`) / Agency (`$79`)** | **`3%` fee** (`97%` net) | Cuts clearinghouse fee to `3%`, adds `upto` dynamic metering and per-agent spend caps |
-| **Done-For-You Integration** | Custom (`From $399`) | Full custom MCP + HTTP 402 setup by [Red Center Studio](https://redcenterstudio.com/services/ai-tollbooth-setup/) |
+| **Done-For-You Integration** | Custom (`From $499`) | Full custom MCP + HTTP 402 setup by [Red Center Studio](https://redcenterstudio.com/services/ai-tollbooth-setup/) |
 
 ---
 

@@ -32,6 +32,8 @@ export interface Env {
   STRIPE_PRICE_TOPUP_10?: string;
   STRIPE_PRICE_PRO_PASS?: string;
   STRIPE_PRICE_AGENCY_PASS?: string;
+  /** 'true' opens paid checkout. Any other value keeps wallet top-ups and passes closed. */
+  PAID_SALES_OPEN?: string;
   STRIPE_PAYMENT_LINK_TOPUP_10?: string;
   STRIPE_PAYMENT_LINK_PRO_PASS?: string;
   STRIPE_PAYMENT_LINK_AGENCY_PASS?: string;
@@ -1139,6 +1141,18 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
   });
 }
 
+function hasRealStripeKey(env: Env): boolean {
+  return Boolean(
+    env.STRIPE_SECRET_KEY &&
+      (env.STRIPE_SECRET_KEY.startsWith('sk_') || env.STRIPE_SECRET_KEY.startsWith('rk_')) &&
+      !env.STRIPE_SECRET_KEY.includes('placeholder'),
+  );
+}
+
+function paidSalesOpen(env: Env): boolean {
+  return env.PAID_SALES_OPEN === 'true';
+}
+
 async function createTopupCheckoutInternal(
   body: TopupCheckoutBody,
   env: Env,
@@ -1187,11 +1201,7 @@ async function createTopupCheckoutInternal(
     }
   }
 
-  const hasLiveOrTestStripeKey = Boolean(
-    env.STRIPE_SECRET_KEY &&
-      (env.STRIPE_SECRET_KEY.startsWith('sk_') || env.STRIPE_SECRET_KEY.startsWith('rk_')) &&
-      !env.STRIPE_SECRET_KEY.includes('placeholder'),
-  );
+  const hasLiveOrTestStripeKey = hasRealStripeKey(env);
 
   const paymentLinkBase =
     body.passTier === 'pro'
@@ -1204,6 +1214,34 @@ async function createTopupCheckoutInternal(
 
   const successUrl = body.successUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=success';
   const cancelUrl = body.cancelUrl ?? 'https://tollbooth.redcenterstudio.com/pay?status=cancelled';
+
+  // Real money never moves unless the webhook can deliver what was bought. A Stripe Checkout Session carries the
+  // wallet or developer id in its metadata; a hosted Payment Link carries none, so it stays behind PAID_SALES_OPEN.
+  const takesRealMoney = hasLiveOrTestStripeKey || Boolean(paymentLinkBase);
+  const fulfilmentId = kind === 'tier_upgrade' ? body.developerId : body.walletId;
+  if (takesRealMoney && !fulfilmentId) {
+    return {
+      status: 400,
+      payload: {
+        error: 'checkout_requires_account_id',
+        code: 'INVALID_REQUEST',
+        fix_hint:
+          kind === 'tier_upgrade'
+            ? 'Pass developerId so the pass can be applied after payment.'
+            : 'Pass walletId so the top-up can be credited after payment.',
+      },
+    };
+  }
+  if (!hasLiveOrTestStripeKey && paymentLinkBase && !paidSalesOpen(env)) {
+    return {
+      status: 409,
+      payload: {
+        error: 'paid_sales_not_open',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'Paid wallet top-ups and passes are not open yet. The sandbox and the free x402 rail work today.',
+      },
+    };
+  }
 
   if (hasLiveOrTestStripeKey && env.STRIPE_SECRET_KEY) {
     const form = new URLSearchParams();
@@ -1407,7 +1445,7 @@ function renderPortalStructuredDataJsonLd(): string {
           {
             '@type': 'Offer',
             name: 'Done-For-You Setup',
-            price: '399',
+            price: '499',
             priceCurrency: 'USD',
           },
         ],
@@ -1486,7 +1524,7 @@ function renderLlmsTxt(): string {
     '- Hybrid Clearinghouse: $0/mo + 7% fee (93% net via Stripe-funded Fiat Agent Wallets)',
     '- Tollbooth Pro Pass: $39 USD once (drops clearinghouse fee to 3%, unlocks `upto` per-token metering & custom 402 HTML)',
     '- Agency Pass: $79 USD once (multi-project 3% clearinghouse fee)',
-    '- Done-For-You Setup: From $399 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
+    '- Done-For-You Setup: From $499 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
     '',
     '## Directory & Source Links',
     '- GitHub: https://github.com/Red-Center-Studio/agent-tollbooth-402',
@@ -1538,15 +1576,18 @@ function renderSitemapXml(): string {
 }
 
 function renderClearinghousePortalHtml(env: Env): string {
-  const topupAction = env.STRIPE_PAYMENT_LINK_TOPUP_10
+  // Buy buttons show only when a purchase can be delivered: sales are open, or this is a sandbox with no Stripe key.
+  const showBuy = paidSalesOpen(env) || (!hasRealStripeKey(env) && !env.STRIPE_PAYMENT_LINK_TOPUP_10);
+  const closedNote = '<span class="btn btn-ghost" aria-disabled="true">Opens soon</span>';
+  const topupAction = !showBuy ? closedNote : env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
     : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>`;
 
-  const proAction = env.STRIPE_PAYMENT_LINK_PRO_PASS
+  const proAction = !showBuy ? closedNote : env.STRIPE_PAYMENT_LINK_PRO_PASS
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_PRO_PASS)}" rel="noopener noreferrer">Buy Pro Pass &middot; $39</a>`
     : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Buy Pro Pass &middot; $39</button>`;
 
-  const agencyAction = env.STRIPE_PAYMENT_LINK_AGENCY_PASS
+  const agencyAction = !showBuy ? '' : env.STRIPE_PAYMENT_LINK_AGENCY_PASS
     ? `<a class="btn btn-ghost" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_AGENCY_PASS)}" rel="noopener noreferrer">Agency Pass &middot; $79</a>`
     : '';
 
@@ -2175,7 +2216,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
                 <td><strong>Done for you</strong></td>
                 <td>Custom MCP + HTTP 402 integration, D1 ledger deployment, and handover by Red Center Studio</td>
                 <td>Fixed quote</td>
-                <td>From $399 USD</td>
+                <td>From $499 USD</td>
               </tr>
             </tbody>
           </table>
@@ -2237,7 +2278,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
           <article class="card">
             <span class="label">Tier 4 &middot; Concierge</span>
             <h3>Done-For-You Setup</h3>
-            <div class="price">From $399</div>
+            <div class="price">From $499</div>
             <p>Custom MCP and HTTP 402 Worker endpoints deployed in your Cloudflare account.</p>
             <ul class="tier-list">
               <li>Per-bot AI crawler policy</li>
@@ -2246,7 +2287,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             </ul>
             <span class="spacer"></span>
             <div class="card-actions">
-              <a class="btn btn-ghost" href="https://redcenterstudio.com/services/ai-tollbooth-setup/" rel="noopener noreferrer">Book setup &middot; $399+</a>
+              <a class="btn btn-ghost" href="https://redcenterstudio.com/services/ai-tollbooth-setup/" rel="noopener noreferrer">Book setup &middot; $499+</a>
             </div>
           </article>
         </div>
