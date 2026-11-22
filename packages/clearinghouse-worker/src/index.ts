@@ -270,6 +270,11 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
         code: 'NONCE_REPLAYED',
         fix_hint: 'This authorization nonce was already settled. Generate a fresh nonce and retry.',
       };
+    case 'insufficient_funds':
+      return {
+        code: 'INSUFFICIENT_FUNDS',
+        fix_hint: 'The paying wallet does not hold enough USDC on this network. Nothing was charged; fund the wallet and sign a new payment.',
+      };
     case 'pro_pass_required_for_upto':
       return {
         code: 'PRO_PASS_REQUIRED',
