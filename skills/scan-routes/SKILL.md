@@ -2,7 +2,7 @@
 name: scan-routes
 description: >-
   Scans Cloudflare Workers, Hono, Next.js App Router, Express, and MCP server routes to identify
-  monetizable endpoints and propose dual-rail HTTP 402 pricing tiers. Use when the user
+  monetizable endpoints and propose HTTP 402 pricing tiers. Use when the user
   invokes /scan-routes or asks to audit an API or MCP server for 402 monetization.
 ---
 
@@ -37,13 +37,13 @@ Never propose `402` gating on `OPTIONS` preflight, `/health`, `/readyz`, `/webho
 | **Compute / Mutation** | External API enrichment, PDF/HTML rendering, scraping, webhooks, write actions | `exact` | `$0.01` – `$0.10` | `10,000` – `100,000` |
 | **Metered / LLM Stream** | Token generation, large payload transforms, variable-KB exports | `upto` *(Pro Pass)* | Ceiling `$0.05` – `$0.50` | `50,000` – `500,000` |
 
-## Step 3: Present Tier & Net Payout Comparison
+## Step 3: Present Tier Comparison
 
-| Tier | Pricing | Clearinghouse Fee | Capabilities Unlocked |
+| Tier | Pricing | Fee on your payments | Capabilities Unlocked |
 | :--- | :--- | :--- | :--- |
-| **Free / BYO x402 Mode** | `$0` | `0%` | Unlimited `/scan-routes`, local middleware injection, `/test-agent` simulator with any x402 facilitator (`exact`). |
-| **Hybrid Fiat + x402 Clearinghouse** | `$0/mo` | `7%` | Stripe-funded Fiat Agent Wallets (`rcs_receipt_...` `<1ms` verification) + automated Stripe Connect payouts (`tollbooth.redcenterstudio.com`). |
-| **Tollbooth Pro Pass** | `$39` one-time (`$79` Agency) | `3%` | Drops fee to `3%`, unlocks `upto` dynamic metering, custom HTML 402 pages, and per-agent spend caps. |
+| **Free (DIY)** | `$0` | `0%` | The connector, plugin and skills, edge middleware, `/test-agent`, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. |
+| **Tollbooth Pro Pass** | `$39` one-time, one project | `0%` | Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history and signed receipts, `upto` dynamic metering and custom HTML 402 pages. Payments still go straight to your wallet. |
+| **Agency Pass** | `$79` one-time | `0%` | The same as Pro for multiple projects and client sites. |
 | **Done-For-You Integration** | From `$499` | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping by Red Center Studio (`https://redcenterstudio.com`). |
 
 ## Step 4: Uniform Markdown Output Format

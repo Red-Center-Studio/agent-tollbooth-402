@@ -24,9 +24,8 @@ function localPricingQuote(args) {
   };
   return {
     monthlyGrossMicros: gross,
-    freeByoX402: calc(0),
-    hybrid7Percent: calc(700),
-    proPass3Percent: calc(300),
+    x402: calc(0),
+    passes: { freeDiyUsd: 0, proPassUsd: 39, agencyPassUsd: 79, oneTime: true },
   };
 }
 

@@ -342,9 +342,8 @@ function jsonWithCors(payload: unknown, status = 200): Response {
 
 /**
  * Exact integer fee math (no floating-point currency calculations).
- * - Hybrid: 7% (700 bps)
- * - Pro / Agency: 3% (300 bps)
- * - Free BYO x402: 0% (0 bps)
+ * x402 USDC payments settle straight to the developer's payTo wallet: 0% (0 bps), for every tier.
+ * The percentages below apply only to the Fiat Agent Wallet rail, which pays Red Center Studio's own routes only.
  */
 export function calculateClearinghouseFee(
   grossMicros: number,
@@ -1662,7 +1661,7 @@ function renderPortalStructuredDataJsonLd(): string {
         offers: [
           {
             '@type': 'Offer',
-            name: 'Free / BYO Crypto x402',
+            name: 'Free (DIY)',
             price: '0',
             priceCurrency: 'USD',
           },
@@ -1694,15 +1693,23 @@ function renderPortalStructuredDataJsonLd(): string {
             name: 'Can I use x402 V2 without paying any platform fee?',
             acceptedAnswer: {
               '@type': 'Answer',
-              text: 'Yes. Set your own payTo wallet address on Base (eip155:8453) in the middleware config to collect 100% of USDC agent payments directly (0% Red Center fee).',
+              text: 'Yes. Set your own payTo wallet address on Base in the middleware config and agents pay your wallet directly in USDC. Red Center Studio never holds your money and takes 0% of payments.',
             },
           },
           {
             '@type': 'Question',
-            name: 'How fast is the Fiat Agent Wallet receipt check?',
+            name: 'What does the Pro Pass add?',
             acceptedAnswer: {
               '@type': 'Answer',
-              text: 'Edge verification validates an HMAC-SHA256 or Ed25519 receipt locally using Web Crypto in under 1ms without waiting for an external checkout round-trip.',
+              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It also adds earnings history, signed receipts, per-call metered pricing and custom 402 page HTML. The Agency Pass is $79 USD once and covers multiple projects.',
+            },
+          },
+          {
+            '@type': 'Question',
+            name: 'Is Base Sepolia testing free?',
+            acceptedAnswer: {
+              '@type': 'Answer',
+              text: 'Yes. Hosted settlement on Base Sepolia testnet is free. Base mainnet is free too if you settle through your own facilitator.',
             },
           },
           {
@@ -1725,7 +1732,7 @@ function renderLlmsTxt(): string {
   return [
     '# Agent Tollbooth 402',
     '',
-    '> Dual-rail HTTP 402 (x402 V2 Base USDC + <1ms Stripe-funded Fiat Agent Wallet) billing middleware, remote MCP clearinghouse, and Claude Code / Antigravity plugin by Red Center Studio.',
+    '> HTTP 402 (x402 V2 Base USDC paid straight to your own wallet, 0% fee) billing middleware, remote MCP server, and Claude Code / Antigravity plugin by Red Center Studio.',
     '',
     '## Live Endpoints',
     '- Portal & Pricing: https://tollbooth.redcenterstudio.com/pay',
@@ -1740,7 +1747,7 @@ function renderLlmsTxt(): string {
     '/plugin install agent-tollbooth-402@agent-tollbooth-402',
     '```',
     '- `/agent-tollbooth-402:scan-routes`: Scan Workers, Hono, Next.js App Router, Express, or MCP servers for monetizable routes.',
-    '- `/agent-tollbooth-402:install-tollbooth`: Inject zero-dependency dual-rail HTTP 402 middleware.',
+    '- `/agent-tollbooth-402:install-tollbooth`: Inject zero-dependency HTTP 402 middleware that pays your own wallet.',
     '- `/agent-tollbooth-402:test-agent`: Run a 30-second offline 402 challenge, receipt verification, and replay-guard smoke test.',
     '',
     '## Install the Edge Middleware',
@@ -1752,7 +1759,7 @@ function renderLlmsTxt(): string {
     '```ts',
     "import { withTollbooth } from '@redcenterstudio/agent-tollbooth-edge';",
     '',
-    'export default withTollbooth({ priceUsd: 0.01, mode: "hybrid" }, async (request) => {',
+    'export default withTollbooth({ priceUsd: 0.01, mode: "x402", payTo: "0xYourBaseUSDCWallet", network: "eip155:84532" }, async (request) => {',
     '  return Response.json({ ok: true, path: new URL(request.url).pathname });',
     '});',
     '```',
@@ -1767,13 +1774,13 @@ function renderLlmsTxt(): string {
     '',
     '## x402 Settlement',
     '- /verify recovers the EIP-712 TransferWithAuthorization signer and checks it is the payer, plus USDC asset, network, recipient, amount, expiry and replay.',
-    '- /settle submits the transfer through an on-chain facilitator: x402.org for Base Sepolia (eip155:84532); Base mainnet (eip155:8453) settles once a mainnet facilitator is configured, and is refused (never faked) until then.',
+    '- /settle submits the transfer through an on-chain facilitator: x402.org for Base Sepolia (eip155:84532), free. Hosted Base mainnet (eip155:8453) needs a Pro or Agency Pass; without one, settle mainnet through your own facilitator. A settlement that cannot run is refused, never faked.',
     '',
     '## Clearinghouse Pricing',
-    '- Free / BYO Crypto x402: $0 USD, 0% fee (100% net to your Base `payTo` wallet)',
-    '- Hybrid Clearinghouse: $0/mo + 7% fee (93% net via Stripe-funded Fiat Agent Wallets)',
-    '- Tollbooth Pro Pass: $39 USD once (drops the Fiat Agent Wallet fee to 3%, unlocks `upto` per-token metering on that rail & custom 402 HTML)',
-    '- Agency Pass: $79 USD once (multi-project 3% clearinghouse fee)',
+    '- Free (DIY): $0 USD. The MCP server, plugin and skills, edge middleware, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. 0% fee.',
+    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history, signed receipts, per-call metered pricing and custom 402 page HTML. Needs the developer account payout address to equal your payTo address.',
+    '- Agency Pass: $79 USD once. The same as Pro for multiple projects and client sites.',
+    '- Payments always go straight to your own payTo wallet in USDC. Red Center Studio never holds your money and takes 0% of payments.',
     '- Done-For-You Setup: From $499 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
     '',
     '## Directory & Source Links',
@@ -1789,7 +1796,7 @@ function renderWellKnownMcpManifest(): Record<string, unknown> {
     title: 'Agent Tollbooth 402',
     version: '1.1.0',
     description:
-      'HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and Stripe top-ups for APIs & MCP.',
+      'HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and earnings history for APIs & MCP. Agents pay your own wallet in USDC.',
     websiteUrl: 'https://tollbooth.redcenterstudio.com/pay',
     endpoint: 'https://tollbooth.redcenterstudio.com/mcp',
     transport: 'streamable-http',
@@ -1876,7 +1883,7 @@ function renderClearinghousePortalHtml(
         <h2>Fund a wallet or buy a pass.</h2>
         <div class="grid g2">
           <form class="card tb-form" data-kind="topup">
-            <h3>Agent wallet top-up</h3>
+            <h3>Agent wallet top-up (Red Center Studio APIs only)</h3>
             <label>Wallet ID <input name="account" placeholder="wallet_..." autocomplete="off" pattern="wallet_[0-9a-f]{20}"></label>
             <button class="btn btn-ghost" type="button" data-register="wallet">No wallet yet? Create one</button>
             <button class="btn btn-primary" type="submit">Pay $10 USD</button>
@@ -1914,17 +1921,17 @@ function renderClearinghousePortalHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
   <title>Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
-  <meta name="description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Self-serve crypto at 0% fee or Stripe-funded Fiat Agent Wallets." />
+  <meta name="description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
   <link rel="canonical" href="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Red Center Studio" />
   <meta property="og:title" content="Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402" />
-  <meta property="og:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Self-serve crypto at 0% fee or Stripe-funded Fiat Agent Wallets." />
+  <meta property="og:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
   <meta property="og:url" content="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402" />
-  <meta name="twitter:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Self-serve crypto at 0% fee or Stripe-funded Fiat Agent Wallets." />
+  <meta name="twitter:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
   <meta name="twitter:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <script type="application/ld+json">${renderPortalStructuredDataJsonLd()}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -2421,7 +2428,7 @@ function renderClearinghousePortalHtml(
         </nav>
         <span class="label">Shop &nbsp;/&nbsp; Claude Code &amp; Antigravity Plugin</span>
         <h1>Charge AI agents per call with HTTP 402 and x402.</h1>
-        <p class="lede">Add pay-per-call HTTP 402 billing to any Cloudflare Worker, Hono route, Next.js App Router handler, or MCP server. Accept open x402 V2 USDC payments straight to your own wallet at 0% fee, or prepaid Stripe-funded Fiat Agent Wallets verified in under 1ms at the edge.</p>
+        <p class="lede">Add pay-per-call HTTP 402 billing to any Cloudflare Worker, Hono route, Next.js App Router handler, or MCP server. Accept open x402 V2 USDC payments straight to your own wallet. Red Center Studio never holds your money and takes 0% of payments. Test free on Base Sepolia, then go live on Base mainnet.</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="#connect">Install in 30 seconds</a>
           <a class="btn btn-ghost" href="#prices">See prices and passes</a>
@@ -2429,8 +2436,8 @@ function renderClearinghousePortalHtml(
         </div>
         <dl class="facts">
           <div><dt class="label">Free tier</dt><dd>$0 USD &middot; 0% fee (x402)</dd></div>
-          <div><dt class="label">Edge check</dt><dd>&lt; 1 ms Web Crypto</dd></div>
-          <div><dt class="label">Rails</dt><dd>Base USDC + Fiat Wallet</dd></div>
+          <div><dt class="label">Go live</dt><dd>Pro Pass $39 once</dd></div>
+          <div><dt class="label">Payouts</dt><dd>USDC to your wallet</dd></div>
         </dl>
         <figure class="proof">
           <div class="proof-frame">
@@ -2482,7 +2489,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
           <article class="card">
             <span class="label">Free skill</span>
             <h3><code>/agent-tollbooth-402:install-tollbooth</code></h3>
-            <p>Injects <code>@redcenterstudio/agent-tollbooth-edge</code> with dual-rail x402 V2 + Fiat Wallet verification and CORS headers.</p>
+            <p>Injects <code>@redcenterstudio/agent-tollbooth-edge</code> with x402 V2 verification, payTo set to your own wallet, and CORS headers.</p>
           </article>
           <article class="card">
             <span class="label">Free skill</span>
@@ -2497,8 +2504,8 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
       <div class="wrap">
         <div class="sec-head">
           <span class="label">Prices and clearinghouse tiers</span>
-          <h2>Free for self-hosted crypto. 7% or 3% for hosted fiat clearing.</h2>
-          <p class="lede">Point <code>payTo</code> at your own Base wallet for 0% fee, or use Red Center Studio&apos;s Stripe-backed Fiat Agent Wallet clearinghouse.</p>
+          <h2>Free to build and test. One small pass to go live.</h2>
+          <p class="lede">Agents pay your own Base wallet in USDC. Red Center Studio never holds your money and takes 0% of payments. The Pro Pass only pays for hosted Base mainnet settlement.</p>
         </div>
 
         <div class="table-wrap">
@@ -2507,33 +2514,27 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               <tr>
                 <th>Tier</th>
                 <th>Covers</th>
-                <th>Fee / Developer Net</th>
+                <th>Fee on your payments</th>
                 <th>Price</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td><strong>Free / BYO Crypto x402</strong></td>
-                <td>Open x402 V2 (<code>eip155:8453</code> Base USDC) to your own <code>payTo</code> wallet, unlimited local skills &amp; sandbox</td>
-                <td>0% fee (100% net)</td>
+                <td><strong>Free (DIY)</strong></td>
+                <td>The MCP server, plugin and skills, edge middleware, hosted settlement on Base Sepolia testnet (<code>eip155:84532</code>), and Base mainnet (<code>eip155:8453</code>) through your own facilitator</td>
+                <td>0% fee</td>
                 <td>$0 USD</td>
               </tr>
               <tr>
-                <td><strong>Hybrid Clearinghouse</strong></td>
-                <td>Stripe-funded Fiat Agent Wallets with &lt;1ms <code>rcs_receipt_...</code> edge verification and D1 nonce guard</td>
-                <td>7% fee (93% net)</td>
-                <td>$0/mo + 7% fee</td>
-              </tr>
-              <tr>
                 <td><strong>Tollbooth Pro Pass</strong></td>
-                <td>Lowers clearinghouse fee, unlocks <code>upto</code> per-token metering, custom 402 HTML pages, and spend caps</td>
-                <td>3% fee (97% net)</td>
+                <td>Hosted Base mainnet settlement through tollbooth.redcenterstudio.com, with no Coinbase developer account, keys or facilitator server of your own. Earnings history and signed receipts. One project</td>
+                <td>0% fee</td>
                 <td>$39 USD once</td>
               </tr>
               <tr>
                 <td><strong>Agency Pass</strong></td>
-                <td>Multi-project license with 3% clearinghouse fee across client Workers, Hono apps, and MCP servers</td>
-                <td>3% fee (97% net)</td>
+                <td>The same as Pro for multiple projects and client sites</td>
+                <td>0% fee</td>
                 <td>$79 USD once</td>
               </tr>
               <tr>
@@ -2548,14 +2549,14 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
 
         <div class="grid g4">
           <article class="card">
-            <span class="label">Tier 1 &middot; Self-serve crypto</span>
-            <h3>Free / BYO Crypto x402</h3>
+            <span class="label">Tier 1 &middot; DIY</span>
+            <h3>Free (DIY)</h3>
             <div class="price">$0 &middot; 0% fee</div>
-            <p>Point <code>payTo</code> at your own Base USDC wallet with any x402 V2 facilitator.</p>
+            <p>Build and test with everything included. Point <code>payTo</code> at your own Base USDC wallet.</p>
             <ul class="tier-list">
-              <li>100% net to your wallet</li>
-              <li>Unlimited skills &amp; sandbox</li>
-              <li>Zero platform account needed</li>
+              <li>Connector, plugin and skills</li>
+              <li>Free hosted testing on Base Sepolia</li>
+              <li>Base mainnet through your own facilitator</li>
             </ul>
             <span class="spacer"></span>
             <div class="card-actions">
@@ -2563,38 +2564,37 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             </div>
           </article>
 
-          <article class="card">
-            <span class="label">Tier 2 &middot; Stripe fiat rail</span>
-            <h3>Hybrid Clearinghouse</h3>
-            <div class="price">$0/mo + 7% fee</div>
-            <p>Hosted Stripe checkout and prepaid Fiat Agent Wallets with &lt;1ms edge verification.</p>
-            <ul class="tier-list">
-              <li>93% net developer payout</li>
-              <li>Sub-millisecond Web Crypto</li>
-              <li>D1 atomic nonce replay guard</li>
-            </ul>
-            <span class="spacer"></span>
-            <div class="card-actions">
-              ${topupAction}
-            </div>
-          </article>
-
           <article class="card wd-pick">
             <div class="card-top-row">
-              <span class="label">Tier 3 &middot; Reduced fee</span>
+              <span class="label">Tier 2 &middot; Go live</span>
               <span class="pop-pill">Most popular</span>
             </div>
-            <h3>Tollbooth Pro &amp; Agency</h3>
-            <div class="price">$39 / $79 once</div>
-            <p>Cuts hosted clearinghouse fee from 7% to 3% (97% net) permanently.</p>
+            <h3>Tollbooth Pro Pass</h3>
+            <div class="price">$39 once &middot; 0% fee</div>
+            <p>Hosted Base mainnet settlement for one project. Payments still go straight to your wallet.</p>
             <ul class="tier-list">
-              <li>3% fee (97% developer net)</li>
-              <li>Dynamic <code>upto</code> token metering</li>
-              <li>Per-agent spend caps &amp; custom HTML</li>
+              <li>No Coinbase account or facilitator server</li>
+              <li>Earnings history and signed receipts</li>
+              <li>Needs your payout address to equal <code>payTo</code></li>
             </ul>
             <span class="spacer"></span>
             <div class="card-actions">
               ${proAction}
+            </div>
+          </article>
+
+          <article class="card">
+            <span class="label">Tier 3 &middot; Multiple projects</span>
+            <h3>Agency Pass</h3>
+            <div class="price">$79 once &middot; 0% fee</div>
+            <p>The same as Pro, for multiple projects and client sites.</p>
+            <ul class="tier-list">
+              <li>Hosted Base mainnet settlement</li>
+              <li>Earnings history and signed receipts</li>
+              <li>Payments go straight to each wallet</li>
+            </ul>
+            <span class="spacer"></span>
+            <div class="card-actions">
               ${agencyAction}
             </div>
           </article>
@@ -2614,6 +2614,19 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               <a class="btn btn-ghost" href="https://redcenterstudio.com/services/ai-tollbooth-setup/" rel="noopener noreferrer">Book setup &middot; $499+</a>
             </div>
           </article>
+        </div>
+
+        <p class="lede" style="margin-top:20px">Prepaid agent wallets pay Red Center Studio&apos;s own APIs only. They are not a way for other developers to get paid. ${topupAction}</p>
+
+        <div class="demo-panel" id="diy">
+          <span class="label">DIY setup in 4 steps</span>
+          <h3 style="margin-top:6px">From nothing to live payments.</h3>
+          <ol class="tier-list" style="padding-left:0">
+            <li><strong>Register.</strong> Create a developer account with your Base wallet as the payout address: <code>POST /developer/register</code> or the connector.</li>
+            <li><strong>Install.</strong> Run <code>/install-tollbooth</code> in Claude Code, or add the middleware by hand, with <code>payTo</code> set to that wallet.</li>
+            <li><strong>Test free.</strong> Run <code>/test-agent</code> and settle on Base Sepolia. It costs nothing.</li>
+            <li><strong>Go live.</strong> Buy a Pro Pass to settle on Base mainnet through the hosted facilitator.</li>
+          </ol>
         </div>
       </div>
     </section>
@@ -2688,12 +2701,12 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               <tr>
                 <td>MCP Tool</td>
                 <td><code>tollbooth_pricing_quote</code></td>
-                <td>Estimate net earnings across Free (0%), Hybrid (7%), and Pro/Agency (3%) tiers.</td>
+                <td>Estimate monthly earnings from x402 payments (0% fee) and see the pass prices.</td>
               </tr>
               <tr>
                 <td>MCP Tool</td>
                 <td><code>tollbooth_wallet_balance</code></td>
-                <td>Check remaining Fiat Agent Wallet credit balance in USD and integer micro-dollars.</td>
+                <td>Check remaining prepaid agent wallet credit balance in USD and integer micro-dollars (studio routes only).</td>
               </tr>
               <tr>
                 <td>MCP Tool</td>
@@ -2708,7 +2721,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               <tr>
                 <td>MCP Tool</td>
                 <td><code>tollbooth_create_topup_checkout</code></td>
-                <td>Create a Stripe Checkout / Payment Link URL for Wallet Top-Ups or Pro/Agency Passes.</td>
+                <td>Create a Stripe Checkout / Payment Link URL for wallet top-ups (studio routes only) or Pro/Agency Passes.</td>
               </tr>
               <tr>
                 <td>MCP Tool</td>
@@ -2723,7 +2736,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               <tr>
                 <td>MCP Tool</td>
                 <td><code>tollbooth_pass_status</code></td>
-                <td>A developer account's tier, fee rate and metering access.</td>
+                <td>A developer account's tier and metering access.</td>
               </tr>
               <tr>
                 <td>HTTP</td>
@@ -2753,14 +2766,18 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
           <div class="faq">
             <details>
               <summary>Can I use x402 V2 without paying any platform fee?</summary>
-              <p>Yes. Set your own <code>payTo</code> wallet address on Base (<code>eip155:8453</code>) in the middleware config to collect 100% of USDC agent payments directly (0% Red Center fee).</p>
+              <p>Yes. Set your own <code>payTo</code> wallet address on Base in the middleware config and agents pay your wallet directly in USDC. Red Center Studio never holds your money and takes 0% of payments.</p>
             </details>
             <details>
-              <summary>How fast is the Fiat Agent Wallet receipt check?</summary>
-              <p>Edge verification validates an HMAC-SHA256 or Ed25519 receipt locally using Web Crypto in under 1ms without waiting for an external checkout round-trip.</p>
+              <summary>What does the Pro Pass add?</summary>
+              <p>It is $39 USD once, for one project. It turns on hosted Base mainnet settlement, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. The Agency Pass is $79 USD once for multiple projects.</p>
             </details>
             <details>
-              <summary>Can I test locally without a Stripe key or crypto wallet?</summary>
+              <summary>Is testing free?</summary>
+              <p>Yes. Hosted settlement on Base Sepolia testnet is free. Base mainnet is free too if you settle through your own facilitator.</p>
+            </details>
+            <details>
+              <summary>Can I test locally without a crypto wallet?</summary>
               <p>Yes. Pass <code>mode: &quot;sandbox&quot;</code> or run <code>/agent-tollbooth-402:test-agent</code> to test 402 headers, signed receipts, browser checkout cards, and nonce replay blocking offline.</p>
             </details>
           </div>
@@ -2855,13 +2872,13 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         {
           badge: 'Step 2 \\u00b7 Zero-Dependency Edge Guard',
           challenge: false,
-          code: "import { withTollbooth } from '@redcenterstudio/agent-tollbooth-edge';\\n\\nexport default withTollbooth({\\n  priceUsd: 0.01,\\n  payTo: '0xYourBaseUSDCWallet',\\n  fiatWallet: { hmacSecret: env.RECEIPT_SIGNING_SECRET }\\n}, handler);",
-          caption: 'Wrap Cloudflare Workers, Hono, Next.js, or MCP routes with dual-rail billing.'
+          code: "import { withTollbooth } from '@redcenterstudio/agent-tollbooth-edge';\\n\\nexport default withTollbooth({\\n  priceUsd: 0.01,\\n  mode: 'x402',\\n  payTo: '0xYourBaseUSDCWallet',\\n  network: 'eip155:84532'\\n}, handler);",
+          caption: 'Wrap Cloudflare Workers, Hono, Next.js, or MCP routes. Payments go to your own wallet.'
         },
         {
           badge: 'Step 3 \\u00b7 HTTP 402 Payment Challenge',
           challenge: true,
-          code: 'GET /demo/402  ->  HTTP/1.1 402 Payment Required\\nPAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiY29kZSI6Ik1JU1NJTkdf...\\n\\n{ "code": "MISSING_PAYMENT", "priceUsd": "0.01", "rails": ["x402-v2", "fiat"] }',
+          code: 'GET /demo/402  ->  HTTP/1.1 402 Payment Required\\nPAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiY29kZSI6Ik1JU1NJTkdf...\\n\\n{ "code": "MISSING_PAYMENT", "priceUsd": "0.01", "rails": ["x402-v2"] }',
           caption: 'AI agents receive strict x402 V2 JSON headers; browsers see a Red Center checkout card.'
         },
         {
@@ -3096,9 +3113,14 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       const monthlyGross = priceMicros * callsPerMonth;
       const quote = {
         monthlyGrossMicros: monthlyGross,
-        freeByoX402: calculateClearinghouseFee(monthlyGross, 'free', 'x402'),
-        hybrid7Percent: calculateClearinghouseFee(monthlyGross, 'hybrid', 'fiat_wallet'),
-        proPass3Percent: calculateClearinghouseFee(monthlyGross, 'pro', 'fiat_wallet'),
+        x402: calculateClearinghouseFee(monthlyGross, 'free', 'x402'),
+        passes: {
+          freeDiyUsd: 0,
+          proPassUsd: 39,
+          agencyPassUsd: 79,
+          oneTime: true,
+          note: 'x402 USDC goes straight to your payTo wallet with 0% Red Center fee. The Pro Pass ($39 once, one project) and Agency Pass ($79 once) pay for hosted Base mainnet settlement, not a share of your earnings. Base Sepolia testing is free.',
+        },
       };
       return jsonRpcOk(rpc.id, {
         content: [{ type: 'text', text: JSON.stringify(quote) }],

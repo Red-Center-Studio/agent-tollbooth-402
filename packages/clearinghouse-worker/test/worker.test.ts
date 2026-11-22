@@ -643,14 +643,15 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
       result: {
         structuredContent: {
           monthlyGrossMicros: number;
-          hybrid7Percent: { platformFeeMicros: number };
-          proPass3Percent: { platformFeeMicros: number };
+          x402: { platformFeeMicros: number; developerNetMicros: number };
+          passes: { proPassUsd: number; agencyPassUsd: number };
         };
       };
     };
     expect(quoteJson.result.structuredContent.monthlyGrossMicros).toBe(50_000_000);
-    expect(quoteJson.result.structuredContent.hybrid7Percent.platformFeeMicros).toBe(3_500_000);
-    expect(quoteJson.result.structuredContent.proPass3Percent.platformFeeMicros).toBe(1_500_000);
+    expect(quoteJson.result.structuredContent.x402.platformFeeMicros).toBe(0);
+    expect(quoteJson.result.structuredContent.x402.developerNetMicros).toBe(50_000_000);
+    expect(quoteJson.result.structuredContent.passes).toMatchObject({ proPassUsd: 39, agencyPassUsd: 79 });
 
     // Authenticated wallet balance tool
     const balRes = await worker.fetch(
@@ -1064,9 +1065,10 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_topup10');
     expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_pro39');
     expect(portalWithLinksHtml).toContain('https://buy.stripe.com/test_agency79');
-    expect(portalWithLinksHtml).toContain('Free / BYO Crypto x402');
-    expect(portalWithLinksHtml).toContain('7% fee');
-    expect(portalWithLinksHtml).toContain('3% fee');
+    expect(portalWithLinksHtml).toContain('Free (DIY)');
+    expect(portalWithLinksHtml).toContain('DIY setup in 4 steps');
+    expect(portalWithLinksHtml).not.toContain('7% fee');
+    expect(portalWithLinksHtml).not.toContain('3% fee');
     expect(portalWithLinksHtml).toContain('From $499');
     expect(portalWithLinksHtml).toContain('@media (max-width: 640px)');
 

@@ -2,7 +2,7 @@
   {
     "name": "tollbooth_pricing_quote",
     "title": "Pricing & Net Revenue Quote",
-    "description": "Compute clearinghouse fee and developer net payout across Free BYO x402 (0%), Hybrid (7%), and Tollbooth Pro/Agency (3%) tiers in integer USD microdollars.",
+    "description": "Estimate monthly x402 earnings in integer USD microdollars. x402 USDC goes straight to your payTo wallet with 0% Red Center fee. Also returns the one-time pass prices: Pro $39 (one project) and Agency $79 (multiple projects) for hosted Base mainnet settlement.",
     "annotations": {
       "title": "Pricing & Net Revenue Quote",
       "readOnlyHint": true,
@@ -33,7 +33,7 @@
   {
     "name": "tollbooth_wallet_balance",
     "title": "Check Wallet Credit Balance",
-    "description": "Inspect an agent wallet credit balance, status, and remaining UTC daily spend cap. Read-only. Needs the wallet key for that wallet (Authorization: Bearer rcs_wk_...).",
+    "description": "Inspect a prepaid agent wallet credit balance, status, and remaining UTC daily spend cap. Wallets pay Red Center Studio routes only. Read-only. Needs the wallet key for that wallet (Authorization: Bearer rcs_wk_...).",
     "annotations": {
       "title": "Check Wallet Credit Balance",
       "readOnlyHint": true,
@@ -57,7 +57,7 @@
   {
     "name": "tollbooth_issue_receipt",
     "title": "Issue Signed Bearer Receipt",
-    "description": "Issue a short-lived Rail B rcs_receipt bearer token (Ed25519-signed, verifiable with /.well-known/tollbooth-jwks.json) that spends from an existing prepaid wallet balance. Needs the wallet key for that wallet. Does not move bank or crypto funds.",
+    "description": "Issue a short-lived Rail B rcs_receipt bearer token (Ed25519-signed, verifiable with /.well-known/tollbooth-jwks.json) that spends from an existing prepaid wallet balance, for Red Center Studio routes only. Needs the wallet key for that wallet. Does not move bank or crypto funds.",
     "annotations": {
       "title": "Issue Signed Bearer Receipt",
       "readOnlyHint": false,
@@ -147,7 +147,7 @@
   {
     "name": "tollbooth_create_topup_checkout",
     "title": "Generate Checkout Link URL",
-    "description": "Return a Stripe Checkout or sandbox link URL that a user can open in a browser to fund a wallet ($1+) or purchase a Pro ($39) / Agency ($79) Pass. Never charges automatically.",
+    "description": "Return a Stripe Checkout or sandbox link URL that a user can open in a browser to fund a prepaid wallet for Red Center Studio routes ($1+) or purchase a Pro ($39) / Agency ($79) Pass for hosted Base mainnet settlement. Never charges automatically.",
     "annotations": {
       "title": "Generate Checkout Link URL",
       "readOnlyHint": true,
@@ -177,7 +177,7 @@
             "pro",
             "agency"
           ],
-          "description": "One-time developer tier upgrade to unlock 3% clearinghouse fee."
+          "description": "One-time pass: pro ($39, one project) or agency ($79, multiple projects) for hosted Base mainnet settlement."
         }
       }
     }
@@ -185,7 +185,7 @@
   {
     "name": "tollbooth_register_wallet",
     "title": "Register Agent Wallet",
-    "description": "Create an empty prepaid Fiat Agent Wallet and return its wallet ID and wallet key (shown once). Moves no money; fund it later with tollbooth_create_topup_checkout.",
+    "description": "Create an empty prepaid agent wallet (for Red Center Studio routes only) and return its wallet ID and wallet key (shown once). Moves no money; fund it later with tollbooth_create_topup_checkout.",
     "annotations": {
       "title": "Register Agent Wallet",
       "readOnlyHint": false,
@@ -218,7 +218,7 @@
   {
     "name": "tollbooth_ledger_history",
     "title": "Ledger History",
-    "description": "List recent ledger entries (top-ups, charges, settlements) for a wallet or a developer account, newest first. Read-only. Needs that account's wallet or developer key.",
+    "description": "List recent ledger entries (earnings history: top-ups, charges, settlements) for a wallet or a developer account, newest first. Read-only. Needs that account's wallet or developer key.",
     "annotations": {
       "title": "Ledger History",
       "readOnlyHint": true,
@@ -249,7 +249,7 @@
   {
     "name": "tollbooth_pass_status",
     "title": "Pass Status",
-    "description": "Show a developer account's tier (hybrid, pro or agency), its Fiat Agent Wallet fee rate and whether upto metering is on. Read-only. Needs the developer key.",
+    "description": "Show a developer account's tier and whether upto metering is on. Pro and Agency Passes turn on hosted Base mainnet settlement. Read-only. Needs the developer key.",
     "annotations": {
       "title": "Pass Status",
       "readOnlyHint": true,

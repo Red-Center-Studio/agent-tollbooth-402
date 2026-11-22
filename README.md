@@ -1,6 +1,6 @@
 # Agent Tollbooth 402
 
-**Monetize APIs, Cloudflare Workers, Hono apps, Next.js routes, and MCP servers in under 60 seconds with dual-rail HTTP 402 payments.**
+**Monetize APIs, Cloudflare Workers, Hono apps, Next.js routes, and MCP servers in under 60 seconds with HTTP 402 payments that go straight to your own wallet.**
 
 Built by [Red Center Studio](https://redcenterstudio.com) for **Google Antigravity** and **Claude Code**.
 
@@ -31,13 +31,13 @@ Copy-paste into any Cloudflare Worker, Web Fetch handler, or Next.js route:
 ```ts
 import { withTollbooth } from "@redcenterstudio/agent-tollbooth-edge";
 
-export default withTollbooth({ priceUsd: 0.01, mode: "hybrid" }, async (request) => {
+export default withTollbooth({ priceUsd: 0.01, mode: "x402", payTo: "0xYourBaseUSDCWallet", network: "eip155:84532" }, async (request) => {
   return Response.json({ ok: true, path: new URL(request.url).pathname });
 });
 ```
 
-- **Local test without wallets or keys:** change `mode: "hybrid"` to `mode: "sandbox"` and call `createSandboxReceipt()` or `createSandboxX402Header()`.
-- **Hono middleware:** `app.use("/api/*", honoTollbooth({ priceUsd: 0.01, mode: "hybrid" }))`.
+- **Local test without wallets or keys:** change `mode: "x402"` to `mode: "sandbox"` and call `createSandboxReceipt()` or `createSandboxX402Header()`.
+- **Hono middleware:** `app.use("/api/*", honoTollbooth({ priceUsd: 0.01, mode: "x402", payTo: "0xYourBaseUSDCWallet", network: "eip155:84532" }))`.
 - **Cloudflare D1 replay protection:** pass `nonceStore: new D1NonceStore(env.DB)` inside `withTollbooth((env) => ({ ... }), handler)`.
 
 ---
@@ -58,7 +58,7 @@ Live clearinghouse portal & MCP endpoint: `https://tollbooth.redcenterstudio.com
 
 ## Dual-Rail Architecture & Browser 402 Checkout Card
 
-`agent-tollbooth-402` supports both **x402 V2** on-chain USDC authorizations and **Red Center Fiat Agent Wallets** verified in `<1ms` via Web Crypto (`HMAC-SHA256` / `Ed25519`).
+`agent-tollbooth-402` takes **x402 V2** on-chain USDC authorizations paid straight to your `payTo` wallet. The middleware can also verify **Red Center Fiat Agent Wallet** receipts, but prepaid wallets pay Red Center Studio's own routes only, not other developers.
 
 - **Programmatic AI Agents (`Accept: application/json`)**: Receive `402 Payment Required` with Base64 `PAYMENT-REQUIRED`, `WWW-Authenticate`, CORS `Access-Control-Expose-Headers`, `priceUsd`, `acceptedRails`, `code`, and a plain-English `fix_hint`.
 - **Human Browser Requests (`Accept: text/html`)**: Receive a responsive Red Center Studio `402` Checkout Card (`#24181a` Ironstone, `#d9622b` Red Ochre, `#e3a23c` Spinifex Gold, `#f5efe6` Sand) displaying endpoint details, price, payment curl snippets, and a **Fund Agent Wallet** action link.
@@ -77,14 +77,25 @@ flowchart LR
 
 ---
 
-## Pricing & Revenue Split
+## Pricing
 
-| Tier | Price | Clearinghouse Fee (Developer Net) | What You Get |
+| Tier | Price | Fee on your payments | What You Get |
 | :--- | :--- | :--- | :--- |
-| **Free / BYO x402 Mode** | **`$0`** | **`0%`** (`100%` net) | Unlimited `/agent-tollbooth-402:scan-routes`, zero-dependency middleware injection, `/agent-tollbooth-402:test-agent` simulator, `exact` x402 V2 scheme with any facilitator. |
-| **Hybrid Fiat + x402 Clearinghouse** | **`$0/mo`** | **`7%`** (`93%` net) | Enables Stripe-funded Fiat Agent Wallets (`rcs_receipt_...` `<1ms` edge verification) + automated Stripe Connect payouts via `tollbooth.redcenterstudio.com`. |
-| **Tollbooth Pro Pass** | **`$39`** one-time (`$79` Agency) | **`3%`** (`97%` net) | Drops clearinghouse fee from `7%` to `3%`, unlocks `upto` dynamic per-token/per-KB metering, custom HTML `402` pages, and per-agent spend caps. |
+| **Free (DIY)** | **`$0`** | **`0%`** | The connector (MCP server), plugin and skills (`/install-tollbooth`, `/scan-routes`, `/test-agent`), edge middleware, hosted settlement on Base Sepolia testnet (`eip155:84532`), and Base mainnet through your own facilitator. |
+| **Tollbooth Pro Pass** | **`$39`** one-time, one project | **`0%`** | Hosted Base mainnet (`eip155:8453`) settlement through `tollbooth.redcenterstudio.com`: no Coinbase developer account, keys or facilitator server of your own. Earnings history and signed receipts (`/developer/ledger`, `tollbooth_ledger_history`), `upto` metering and custom HTML `402` pages. Needs the developer account `payoutAddress` to equal your `payTo`. |
+| **Agency Pass** | **`$79`** one-time | **`0%`** | The same as Pro for multiple projects and client sites. |
 | **Done-For-You Integration** | **From `$499`** | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping, D1 ledger setup, and verification by [Red Center Studio](https://redcenterstudio.com). |
+
+---
+
+Payments always go straight to your own `payTo` wallet in USDC. Red Center Studio never holds your money and takes 0% of payments.
+
+### DIY setup in 4 steps
+
+1. Register a developer account with your Base wallet as the payout address (`POST /developer/register` or the connector).
+2. Run `/install-tollbooth` in Claude Code (or add the middleware by hand) with `payTo` set to that wallet.
+3. Test free on Base Sepolia with `/test-agent`.
+4. Buy a Pro Pass to go live on Base mainnet.
 
 ---
 
@@ -115,23 +126,23 @@ npm install https://github.com/Red-Center-Studio/agent-tollbooth-402/releases/do
   - `test-agent`: Runs the 30-second zero-config sandbox `402 -> sign -> 200 OK` smoke test.
 - **Scoped Guardrails (`rules/http-402-guardrails.md`)**: Enforces bypass exemptions, constant-time Web Crypto checks, replay protection, downstream `5xx` idempotency, integer microdollar math, and spend caps.
 
-## Accounts, keys and receipts (Rail B)
+## Accounts, keys and receipts
 
-- `POST /wallet/register` creates an empty agent wallet and returns a wallet key (`rcs_wk_...`), shown once. `POST /developer/register` does the same for a developer account (`rcs_dk_...`). Only SHA-256 hashes of keys are stored; `POST /keys/rotate` replaces a key.
+- `POST /developer/register` creates a developer account and returns a developer key (`rcs_dk_...`), shown once. Send your Base wallet as `payoutAddress`. `POST /wallet/register` creates an empty prepaid agent wallet (`rcs_wk_...`); prepaid wallets pay Red Center Studio's own routes only, not other developers. Only SHA-256 hashes of keys are stored; `POST /keys/rotate` replaces a key.
 - A wallet key can read only its own balance and ledger, and can only request receipts that spend from its own wallet.
-- Receipts are signed with Ed25519. Merchants verify them with the public key at `https://tollbooth.redcenterstudio.com/.well-known/tollbooth-jwks.json` and never hold a secret that could mint receipts:
+- Receipts for Red Center Studio routes are signed with Ed25519. They are verified with the public key at `https://tollbooth.redcenterstudio.com/.well-known/tollbooth-jwks.json` and never hold a secret that could mint receipts:
 
 ```ts
 import { fetchTollboothPublicKey, withTollbooth } from '@redcenterstudio/agent-tollbooth-edge';
 const ed25519PublicKey = await fetchTollboothPublicKey(); // cache this
-export default withTollbooth({ mode: 'hybrid', fiatWallet: { ed25519PublicKey } }, handler);
+export default withTollbooth({ mode: 'x402', payTo: '0xYourBaseUSDCWallet', fiatWallet: { ed25519PublicKey } }, handler);
 ```
 
-## x402 settlement (Rail A)
+## x402 settlement
 
 - `/verify` recovers the EIP-712 `TransferWithAuthorization` signer with secp256k1 and checks it is the payer, along with the USDC asset, network, recipient, amount, expiry and replay records.
-- `/settle` submits the transfer through an on-chain facilitator: the public x402.org facilitator on Base Sepolia (`eip155:84532`), and Coinbase's CDP facilitator on Base mainnet (`eip155:8453`) once `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` are set. Without a mainnet facilitator, mainnet settlement is refused, never faked.
-- Payments go straight to your `payTo` wallet, so Rail A carries no clearinghouse fee.
+- `/settle` submits the transfer through an on-chain facilitator: the public x402.org facilitator on Base Sepolia (`eip155:84532`), free. Hosted Base mainnet (`eip155:8453`) settlement needs a Pro or Agency Pass; without one, settle mainnet through your own facilitator. A settlement that cannot run is refused, never faked.
+- Payments go straight to your `payTo` wallet, so x402 carries no Red Center fee.
 
 ---
 
