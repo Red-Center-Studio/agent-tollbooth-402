@@ -1,6 +1,6 @@
 {
   "name": "@redcenterstudio/agent-tollbooth-clearinghouse",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Reference Cloudflare Worker + D1 clearinghouse and Streamable HTTP MCP server for Agent Tollbooth 402 (DO NOT DEPLOY directly without configuring your own secrets and D1 database).",
   "license": "MIT",
   "private": true,
