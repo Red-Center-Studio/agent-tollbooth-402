@@ -1366,6 +1366,11 @@ function studioDeveloperIds(env: Env): Set<string> {
   );
 }
 
+/** Top-ups are only sold while a studio-owned route can actually be paid from a wallet. */
+function topupsOpen(env: Env): boolean {
+  return studioDeveloperIds(env).size > 0;
+}
+
 function paidSalesOpen(env: Env): boolean {
   return env.PAID_SALES_OPEN === 'true';
 }
@@ -1384,12 +1389,23 @@ async function createTopupCheckoutInternal(
     amountMicros = body.passTier === 'agency' ? 79_000_000 : 39_000_000;
     productName =
       body.passTier === 'agency'
-        ? 'Agent Tollbooth 402 — Agency Pass'
-        : 'Agent Tollbooth 402 — Pro Pass';
+        ? 'Agent Tollbooth 402 Agency Pass'
+        : 'Agent Tollbooth 402 Pro Pass';
     stripePriceId =
       body.passTier === 'agency' ? env.STRIPE_PRICE_AGENCY_PASS : env.STRIPE_PRICE_PRO_PASS;
   } else {
     kind = 'wallet_topup';
+    if (!topupsOpen(env)) {
+      return {
+        status: 409,
+        payload: {
+          error: 'topups_not_open',
+          code: 'RAIL_NOT_AVAILABLE',
+          fix_hint:
+            'Agent wallet top-ups open once Red Center Studio APIs accept them. Pay developers directly with x402 USDC instead.',
+        },
+      };
+    }
     try {
       amountMicros = usdToMicros(body.amountUsd ?? 10);
     } catch {
@@ -1885,19 +1901,20 @@ function renderClearinghousePortalHtml(
     ? `<section id="buy" style="padding-top:0">
       <div class="wrap narrow">
         <span class="label">Buy</span>
-        <h2>Fund a wallet or buy a pass.</h2>
+        <h2>${topupsOpen(env) ? 'Fund a wallet or buy a pass.' : 'Buy a pass.'}</h2>
         <div class="grid g2">
-          <form class="card tb-form" data-kind="topup">
+          ${topupsOpen(env) ? '' : '<!--'}<form class="card tb-form" data-kind="topup">
             <h3>Agent wallet top-up (Red Center Studio APIs only)</h3>
             <label>Wallet ID <input name="account" placeholder="wallet_..." autocomplete="off" pattern="wallet_[0-9a-f]{20}"></label>
             <button class="btn btn-ghost" type="button" data-register="wallet">No wallet yet? Create one</button>
             <button class="btn btn-primary" type="submit">Pay $10 USD</button>
-          </form>
+          </form>${topupsOpen(env) ? '' : '-->'}
           <form class="card tb-form" data-kind="pass">
             <h3>Pro or Agency pass</h3>
             <label>Developer ID <input name="account" placeholder="dev_..." autocomplete="off" pattern="dev_[0-9a-f]{20}"></label>
             <label>Email <input name="email" type="email" autocomplete="email"></label>
             <label>Name <input name="owner" autocomplete="name"></label>
+            <label>Base wallet that receives payments (your payTo) <input name="payout" placeholder="0x..." autocomplete="off" pattern="0x[0-9a-fA-F]{40}"></label>
             <button class="btn btn-ghost" type="button" data-register="developer">No account yet? Create one</button>
             <label>Pass <select name="tier"><option value="pro">Pro &middot; $39 once</option><option value="agency">Agency &middot; $79 once</option></select></label>
             <button class="btn btn-primary" type="submit">Buy pass</button>
@@ -1907,7 +1924,7 @@ function renderClearinghousePortalHtml(
       </div>
     </section>`
     : '';
-  const topupAction = !showBuy ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Fund Agent Wallet ($10)</a>' : env.STRIPE_PAYMENT_LINK_TOPUP_10
+  const topupAction = !showBuy || !topupsOpen(env) ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Fund Agent Wallet ($10)</a>' : env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
     : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>`;
 
@@ -2840,7 +2857,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
     document.querySelectorAll('[data-register]').forEach((b) => b.addEventListener('click', async () => {
       const form = b.closest('form');
       const isWallet = b.dataset.register === 'wallet';
-      const body = isWallet ? {} : { email: form.elements.email.value, name: form.elements.owner.value };
+      const body = isWallet ? {} : { email: form.elements.email.value, name: form.elements.owner.value, payoutAddress: form.elements.payout.value.trim() || undefined };
       const [ok, j] = await post(isWallet ? '/wallet/register' : '/developer/register', body);
       if (!ok) { out.textContent = j.fix_hint || 'Could not create the account.'; return; }
       form.elements.account.value = isWallet ? j.walletId : j.developerId;

@@ -385,7 +385,17 @@ describe('Production mode: self-serve accounts, scoped keys and Ed25519 receipts
     expect(closedPage).toContain('Opens soon');
     expect(closedPage).not.toContain('id="buy"');
 
-    const open: Env = { ...withStripe, PAID_SALES_OPEN: 'true' };
+    // Sales open but no studio route accepts wallets yet: top-ups stay unsold and the page offers passes only.
+    const passesOnly: Env = { ...withStripe, PAID_SALES_OPEN: 'true' };
+    const noTopup = await worker.fetch(post('/wallet/topup', { walletId, amountUsd: 10 }), passesOnly, ctx);
+    expect(noTopup.status).toBe(409);
+    expect(((await noTopup.json()) as { error: string }).error).toBe('topups_not_open');
+    const passPage = await (await worker.fetch(new Request(`${BASE}/pay`), passesOnly, ctx)).text();
+    expect(passPage).toContain('Buy a pass.');
+    expect(passPage).toContain('name="payout"');
+    expect(passPage).toContain('<!--<form class="card tb-form" data-kind="topup">');
+
+    const open: Env = { ...withStripe, PAID_SALES_OPEN: 'true', STUDIO_DEVELOPER_IDS: 'dev_studio' };
     const missing = await worker.fetch(post('/wallet/topup', { walletId: 'wallet_00000000000000000000', amountUsd: 10 }), open, ctx);
     expect(missing.status).toBe(404);
 
