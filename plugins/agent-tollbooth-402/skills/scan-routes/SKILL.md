@@ -26,7 +26,7 @@ Search the workspace without executing untrusted application code:
 5. **MCP Servers (`tools/list`, `server.tool`, `setRequestHandler`)**:
    - Locate MCP tool registrations and `POST /mcp` JSON-RPC dispatchers.
 
-## Step 2: Classify Each Route & Assign Dual-Rail Pricing
+## Step 2: Classify Each Route & Assign Pricing
 
 Never propose `402` gating on `OPTIONS` preflight, `/health`, `/readyz`, `/webhook/*`, or OAuth callback routes. Classify every remaining endpoint:
 

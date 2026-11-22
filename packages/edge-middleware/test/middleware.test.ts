@@ -745,9 +745,11 @@ describe('withTollbooth dual-rail edge middleware', () => {
     expect(html).toContain('#fffcf8');
     expect(html).toContain('#2a1a16');
     expect(html).toContain('402 Payment Required');
-    expect(html).toContain('Pay with Fiat Agent Wallet');
     expect(html).toContain('Pay with Crypto (x402 V2)');
-    expect(html).toContain('Fund Agent Wallet');
+    expect(html).not.toContain('Simulate');
+    expect(html).not.toContain('Fiat Agent Wallet');
+    expect(html).toContain('Pay with Crypto (x402 V2)');
+    expect(html).toContain('How AI agents pay');
     expect(html).toContain('eip155:8453');
     expect(html).toContain('/api/data');
   });

@@ -2,8 +2,8 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "agent-tollbooth-402",
   "displayName": "Agent Tollbooth 402",
-  "version": "1.0.0",
-  "description": "Monetize APIs, Cloudflare Workers, Hono apps, and MCP servers in under 60 seconds with dual-rail HTTP 402 (open x402 V2 + <1ms Red Center Fiat Agent Wallet receipts).",
+  "version": "1.2.0",
+  "description": "Charge AI agents per call with HTTP 402 and x402: USDC straight to your own wallet, 0% fee. Scan routes, install edge middleware for Cloudflare Workers, Hono, Next.js and MCP servers, and test free on Base Sepolia.",
   "author": {
     "name": "Red Center Studio",
     "url": "https://redcenterstudio.com"
@@ -16,7 +16,7 @@
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Scan my API and MCP routes and propose HTTP 402 pricing tiers",
-    "Install dual-rail 402 tollbooth middleware on my Cloudflare Worker or Hono app",
+    "Install HTTP 402 x402 middleware on my Cloudflare Worker or Hono app",
     "Run a local 402 challenge, receipt signing, and 200 OK retry smoke test"
   ]
 }

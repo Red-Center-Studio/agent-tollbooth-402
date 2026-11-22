@@ -1084,7 +1084,9 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(demoHtmlRes.headers.get('PAYMENT-REQUIRED')).toBeTruthy();
     const demoHtml = await demoHtmlRes.text();
     expect(demoHtml).toContain('@media (max-width: 640px)');
-    expect(demoHtml).toContain('Fund Agent Wallet');
+    expect(demoHtml).toContain('How AI agents pay');
+    expect(demoHtml).not.toContain('Simulate');
+    expect(demoHtml).not.toContain('Fund Agent Wallet');
 
     const demoJsonRes = await worker.fetch(
       new Request('https://tollbooth.redcenterstudio.com/demo/402', {

@@ -3,7 +3,7 @@
  * Zero-dependency dual-rail HTTP 402 middleware for Cloudflare Workers, Fetch APIs, Next.js, and Hono.
  *
  * Rail A: Open x402 V2 standard (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`)
- * Rail B: Red Center Fiat Agent Wallet (`rcs_receipt_...` verified <1ms via Web Crypto + NonceStore)
+ * Rail B: prepaid Red Center agent wallet receipts (`rcs_receipt_...`, Web Crypto + NonceStore), Red Center Studio routes only
  */
 
 export type PaymentScheme = 'exact' | 'upto';
@@ -767,7 +767,7 @@ function resolveErrorGuidance(
     case 'insufficient_payment_amount':
       return {
         code: 'INSUFFICIENT_FUNDS',
-        fix_hint: `Payment amount is below the required ${priceStr}. Top up your agent wallet or authorize at least ${requiredMicros} atomic units.`,
+        fix_hint: `Payment amount is below the required ${priceStr}. Authorize at least ${requiredMicros} atomic units.`,
       };
     case 'RECEIPT_EXPIRED':
     case 'receipt_expired':
@@ -843,11 +843,12 @@ export function renderDefault402HtmlPage(
   const payTo = accept?.payTo ?? DEFAULT_PAY_TO;
   const network = accept?.network ?? DEFAULT_NETWORK;
   const scheme = accept?.scheme ?? 'exact';
-  const railsText = challenge.acceptedRails.includes('rcs-fiat-wallet')
-    ? 'x402 V2 (USDC) + Red Center Fiat Wallet'
-    : 'x402 V2 (USDC)';
+  const hasFiat = challenge.acceptedRails.includes('rcs-fiat-wallet');
+  const railsText = hasFiat ? 'x402 V2 (USDC) + prepaid agent wallet' : 'x402 V2 (USDC)';
 
-  const safeCurl = `curl -H "PAYMENT-SIGNATURE: <base64_x402_v2>" "${request.url}"\ncurl -H "Authorization: Bearer rcs_receipt_..." "${request.url}"\n# payTo: ${payTo}`;
+  const fiatCurl = `curl -H "PAYMENT-SIGNATURE: <base64_x402_v2>" "${request.url}"\ncurl -H "Authorization: Bearer rcs_receipt_..." "${request.url}"\n# payTo: ${payTo}`;
+  const x402Curl = `curl -H "PAYMENT-SIGNATURE: <base64_x402_v2>" "${request.url}"\n# payTo: ${payTo}`;
+  const safeCurl = hasFiat ? fiatCurl : x402Curl;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -855,7 +856,7 @@ export function renderDefault402HtmlPage(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
-  <title>402 Payment Required — Agent Tollbooth 402 | Red Center Studio</title>
+  <title>402 Payment Required: Agent Tollbooth 402 | Red Center Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" />
@@ -1033,6 +1034,7 @@ export function renderDefault402HtmlPage(
       gap: 10px;
       margin-bottom: 11px;
     }
+    .rails.one { grid-template-columns: 1fr; }
     .rail-box {
       padding: 11px 13px;
       background: #fff;
@@ -1161,7 +1163,7 @@ export function renderDefault402HtmlPage(
   <header class="site-head">
     <div class="head-wrap">
       <a class="brand" href="https://redcenterstudio.com/" rel="noopener noreferrer">Red Center Studio</a>
-      <a class="head-link" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Clearinghouse Portal</a>
+      <a class="head-link" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Agent Tollbooth 402</a>
     </div>
     <span class="strata" aria-hidden="true"></span>
   </header>
@@ -1187,11 +1189,11 @@ export function renderDefault402HtmlPage(
           <div class="val">${escapeHtml(network)} &middot; ${escapeHtml(amountAtomic)} USDC &middot; payTo <code>${escapeHtml(payTo)}</code></div>
         </div>
       </div>
-      <div class="rails">
+      <div class="rails${hasFiat ? '' : ' one'}">${hasFiat ? `
         <div class="rail-box">
-          <h2>Pay with Fiat Agent Wallet</h2>
-          <p>Top up with Stripe on Red Center Studio and pass a prepaid <code>rcs_receipt_...</code> bearer token for &lt;1ms edge verification.</p>
-        </div>
+          <h2>Pay with a prepaid agent wallet</h2>
+          <p>Pass a prepaid <code>rcs_receipt_...</code> bearer token issued by Red Center Studio for this route.</p>
+        </div>` : ''}
         <div class="rail-box">
           <h2>Pay with Crypto (x402 V2)</h2>
           <p>Sign a Base USDC payment payload on <code>${escapeHtml(network)}</code> to <code>${escapeHtml(payTo)}</code> and retry with <code>PAYMENT-SIGNATURE</code>.</p>
@@ -1200,15 +1202,13 @@ export function renderDefault402HtmlPage(
       <div class="hint"><strong>Next step:</strong> ${escapeHtml(challenge.fix_hint)}</div>
       <div class="code-shell">
         <div class="code-bar">
-          <span class="code-title"><span class="term-dots"><i></i><i></i><i></i></span>HTTP 402 Retry Snippet &middot; x402 V2 &amp; Bearer Receipt</span>
+          <span class="code-title"><span class="term-dots"><i></i><i></i><i></i></span>HTTP 402 Retry Snippet &middot; x402 V2${hasFiat ? ' &amp; Bearer Receipt' : ''}</span>
           <button class="copy-btn" type="button" onclick="var b=this;navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('curl-cmd').textContent).then(function(){b.textContent='Copied';b.style.borderColor='#4f7f63';b.style.color='#2f5a41';setTimeout(function(){b.textContent='Copy';b.style.borderColor='';b.style.color='';},1500);})">Copy</button>
         </div>
         <pre class="code" id="curl-cmd">${escapeHtml(safeCurl)}</pre>
       </div>
-      <div id="retry-status" class="sim-banner" role="status" aria-live="polite"></div>
       <div class="actions">
-        <a class="btn btn-primary" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Fund Agent Wallet</a>
-        <button id="sim-retry-btn" class="btn btn-sand" type="button" onclick="var b=this,s=document.getElementById('retry-status');b.disabled=true;b.textContent='Verifying...';s.className='sim-banner show';s.textContent='Signing sandbox rcs_receipt_... via Web Crypto HMAC-SHA256...';setTimeout(function(){b.disabled=false;b.textContent='Verified (200 OK)';s.textContent='[200 SETTLED] Edge HMAC check passed in 0.4ms | PAYMENT-RESPONSE verified | ${escapeHtml(request.method.toUpperCase())} ${escapeHtml(url.pathname)} unlocked ($${escapeHtml(challenge.priceUsd)} USD)';},320);">Simulate &lt;1ms Receipt Retry</button>
+        <a class="btn btn-primary" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">How AI agents pay</a>
         <a class="btn btn-ghost" href="https://redcenterstudio.com/services/ai-tollbooth-setup/" rel="noopener noreferrer">See AI Tollbooth Setup</a>
       </div>
       <p class="meta-foot">Powered by Agent Tollbooth 402 &middot; <a href="https://redcenterstudio.com/" rel="noopener noreferrer">Red Center Studio</a></p>

@@ -46,7 +46,7 @@ export default withTollbooth({ priceUsd: 0.01, mode: "x402", payTo: "0xYourBaseU
 
 Live clearinghouse portal & MCP endpoint: `https://tollbooth.redcenterstudio.com` ([/pay](https://tollbooth.redcenterstudio.com/pay) · [/demo/402](https://tollbooth.redcenterstudio.com/demo/402))
 
-- [Setup Walkthrough Video (MP4)](./assets/screenshots/setup-walkthrough.mp4) — copying the install command, running the live `402` check, and inspecting the browser checkout card.
+- [Setup Walkthrough Video (MP4)](./assets/screenshots/setup-walkthrough.mp4): copying the install command, running the live `402` check, and inspecting the browser checkout card.
 
 ![Clearinghouse Setup & 4-Tier Portal](./assets/screenshots/clearinghouse-portal.png)
 
@@ -56,19 +56,19 @@ Live clearinghouse portal & MCP endpoint: `https://tollbooth.redcenterstudio.com
 
 ---
 
-## Dual-Rail Architecture & Browser 402 Checkout Card
+## How It Works & Browser 402 Card
 
-`agent-tollbooth-402` takes **x402 V2** on-chain USDC authorizations paid straight to your `payTo` wallet. The middleware can also verify **Red Center Fiat Agent Wallet** receipts, but prepaid wallets pay Red Center Studio's own routes only, not other developers.
+`agent-tollbooth-402` takes **x402 V2** on-chain USDC authorizations paid straight to your `payTo` wallet. Prepaid Red Center agent wallet receipts are accepted on Red Center Studio's own routes only; they are not a way for other developers to get paid.
 
 - **Programmatic AI Agents (`Accept: application/json`)**: Receive `402 Payment Required` with Base64 `PAYMENT-REQUIRED`, `WWW-Authenticate`, CORS `Access-Control-Expose-Headers`, `priceUsd`, `acceptedRails`, `code`, and a plain-English `fix_hint`.
-- **Human Browser Requests (`Accept: text/html`)**: Receive a responsive Red Center Studio `402` Checkout Card (`#24181a` Ironstone, `#d9622b` Red Ochre, `#e3a23c` Spinifex Gold, `#f5efe6` Sand) displaying endpoint details, price, payment curl snippets, and a **Fund Agent Wallet** action link.
+- **Human Browser Requests (`Accept: text/html`)**: Receive a responsive Red Center Studio `402` Checkout Card (`#24181a` Ironstone, `#d9622b` Red Ochre, `#e3a23c` Spinifex Gold, `#f5efe6` Sand) displaying endpoint details, price, a payment snippet, and a **How AI agents pay** link.
 
 ```mermaid
 flowchart LR
     Agent["AI Agent / Browser"] -->|1. Request API or /mcp| Edge["@redcenterstudio/agent-tollbooth-edge"]
     Edge -->|2. Unpaid -> 402 JSON or HTML Card| Agent
     Agent -->|3A. Rail A: PAYMENT-SIGNATURE x402 V2| Edge
-    Agent -->|3B. Rail B: Bearer rcs_receipt_... <1ms Web Crypto| Edge
+    Agent -->|3B. Studio routes only: Bearer rcs_receipt_...| Edge
     Edge -->|4A. /verify & /settle| Facilitator["Clearinghouse Worker / Facilitator"]
     Edge -->|4B. HMAC-SHA256 / Ed25519 + D1 used_nonces| NonceDB[("Cloudflare D1")]
     Facilitator -->|Atomic Debit & Ledger| NonceDB
@@ -163,4 +163,4 @@ export default withTollbooth({ mode: 'x402', payTo: '0xYourBaseUSDCWallet', fiat
 
 ## License
 
-[MIT](./LICENSE) — Red Center Studio (`https://redcenterstudio.com`)
+[MIT](./LICENSE), Red Center Studio (`https://redcenterstudio.com`)

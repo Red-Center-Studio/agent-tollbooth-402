@@ -6,7 +6,7 @@ description: >-
   zero crypto wallets, and zero Stripe setup. Use when the user invokes /test-agent.
 ---
 
-# Test Agent — 30-Second Zero-Config HTTP 402 Smoke Test
+# Test Agent: 30-Second Zero-Config HTTP 402 Smoke Test
 
 Verify any gated endpoint locally in under 30 seconds with **zero API keys, zero crypto wallets, and zero Stripe setup** using `mode: "sandbox"` (or `mode: "mock"`).
 
@@ -71,7 +71,7 @@ Report results to the user using these exact standardized status badges:
 | :--- | :--- | :--- |
 | 1. Unpaid JSON request | `[402 CHALLENGE]` | `HTTP 402` + Base64 `PAYMENT-REQUIRED` + `code=MISSING_PAYMENT` + `fix_hint` |
 | 2. Browser `Accept: text/html` | `[PASS]` | Self-contained Red Center Studio (`#24181a` Ironstone / `#d9622b` Ochre / `#f5efe6` Sand) 402 Checkout Card rendered |
-| 3. Rail B Sandbox Receipt | `[200 SETTLED]` | `HTTP 200` + Base64 `PAYMENT-RESPONSE` (`<1ms` Web Crypto verification) |
+| 3. Rail B Sandbox Receipt | `[200 SETTLED]` | `HTTP 200` + Base64 `PAYMENT-RESPONSE` (local Web Crypto verification) |
 | 4. Nonce Replay Attempt | `[PASS]` | `HTTP 402` blocked with `NONCE_REPLAYED` and plain-English `fix_hint` |
 | 5. Rail A x402 V2 Flow | `[200 SETTLED]` | `/verify` -> handler -> `/settle` -> `HTTP 200` + `PAYMENT-RESPONSE` |
 | Missing/expired configuration | `[ACTION NEEDED]` | Follow `fix_hint` in the JSON body or set `mode: "sandbox"` |

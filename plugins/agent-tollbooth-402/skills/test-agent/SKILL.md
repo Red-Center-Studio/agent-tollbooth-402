@@ -6,7 +6,7 @@ description: >-
   Use when the user invokes /test-agent.
 ---
 
-# Test Agent — Zero-Config HTTP 402 Verification
+# Test Agent: Zero-Config HTTP 402 Verification
 
 Verify any gated endpoint locally with **zero external configuration or wallets** using `mode: "sandbox"`.
 
@@ -48,6 +48,6 @@ const replay = await app.fetch(
 | :--- | :--- | :--- |
 | 1. Unpaid JSON request | `[402 CHALLENGE]` | `HTTP 402` + Base64 `PAYMENT-REQUIRED` + `code=MISSING_PAYMENT` + `fix_hint` |
 | 2. Browser `Accept: text/html` | `[PASS]` | Self-contained Red Center Studio `402` Checkout Card rendered |
-| 3. Sandbox Receipt Retry | `[200 SETTLED]` | `HTTP 200` + Base64 `PAYMENT-RESPONSE` (`<1ms` Web Crypto check) |
+| 3. Sandbox Receipt Retry | `[200 SETTLED]` | `HTTP 200` + Base64 `PAYMENT-RESPONSE` (local Web Crypto check) |
 | 4. Nonce Replay Attempt | `[PASS]` | `HTTP 402` blocked with `NONCE_REPLAYED` and plain-English `fix_hint` |
 | 5. Live Pricing / Wallet Tools | `[PASS]` | Use `tollbooth_pricing_quote` and `tollbooth_verify_x402` via MCP |
