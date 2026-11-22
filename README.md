@@ -116,7 +116,7 @@ git clone https://github.com/Red-Center-Studio/agent-tollbooth-402.git ~/.gemini
 Install the zero-dependency Edge Middleware in a Worker, Hono, or Next.js project:
 
 ```bash
-npm install https://github.com/Red-Center-Studio/agent-tollbooth-402/releases/download/v1.1.0/redcenterstudio-agent-tollbooth-edge-1.1.0.tgz
+npm install @redcenterstudio/agent-tollbooth-edge
 ```
 
 - **Remote MCP Server (`mcp_config.json` & `.mcp.json`)**: Connects to `https://tollbooth.redcenterstudio.com/mcp` via Streamable HTTP (`tollbooth_pricing_quote`, `tollbooth_wallet_balance`, `tollbooth_issue_receipt`, `tollbooth_verify_x402`, `tollbooth_create_topup_checkout`, `tollbooth_register_wallet`, `tollbooth_ledger_history`, `tollbooth_pass_status`). See our [Privacy Policy](https://redcenterstudio.com/privacy).

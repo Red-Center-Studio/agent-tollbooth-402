@@ -1486,13 +1486,27 @@ async function createTopupCheckoutInternal(
   if (takesRealMoney && fulfilmentId) {
     const found =
       kind === 'tier_upgrade'
-        ? await env.DB.prepare('SELECT id FROM developers WHERE id = ? LIMIT 1').bind(fulfilmentId).first<{ id: string }>()
+        ? await env.DB.prepare('SELECT id, payout_address FROM developers WHERE id = ? LIMIT 1')
+            .bind(fulfilmentId)
+            .first<{ id: string; payout_address?: string | null }>()
         : await env.DB.prepare("SELECT id FROM agent_wallets WHERE id = ? AND status = 'active' LIMIT 1")
             .bind(fulfilmentId)
             .first<{ id: string }>();
     if (!found) {
       const reason = kind === 'tier_upgrade' ? 'developer_not_found' : 'wallet_not_found';
       return { status: 404, payload: { error: reason, ...resolveClearinghouseGuidance(reason) } };
+    }
+    // The pass unlocks hosted settlement by matching payTo to the payout address, so never sell one without it.
+    if (kind === 'tier_upgrade' && !(found as { payout_address?: string | null }).payout_address) {
+      return {
+        status: 409,
+        payload: {
+          error: 'payout_address_required',
+          code: 'INVALID_REQUEST',
+          fix_hint:
+            'This developer account has no payout wallet, so a pass could not unlock anything. Create an account with the Base wallet you use as payTo, then buy the pass for that account.',
+        },
+      };
     }
   }
 
@@ -1540,12 +1554,14 @@ async function createTopupCheckoutInternal(
       error?: { message?: string };
     };
     if (!stripeRes.ok || !stripeJson.url) {
+      console.error('stripe_checkout_failed', stripeRes.status, stripeJson.error?.message ?? '');
       return {
         status: 502,
         payload: {
           error: 'stripe_checkout_failed',
           code: 'FACILITATOR_ERROR',
-          fix_hint: stripeJson.error?.message ?? 'Check STRIPE_SECRET_KEY and Stripe API status.',
+          fix_hint:
+            'Checkout could not open right now. Nothing was charged. Please try again in a minute, or email hello@redcenterstudio.com.',
         },
       };
     }
@@ -1848,9 +1864,8 @@ function renderSitemapXml(): string {
 `;
 }
 
-/** The edge middleware as a release tarball: plain `npm install <url>` works without a registry account. */
-export const EDGE_TARBALL_URL =
-  'https://github.com/Red-Center-Studio/agent-tollbooth-402/releases/download/v1.1.0/redcenterstudio-agent-tollbooth-edge-1.1.0.tgz';
+/** The edge middleware on the npm registry. Not exported: Workers treat named exports of the entry as handlers. */
+const EDGE_TARBALL_URL = '@redcenterstudio/agent-tollbooth-edge';
 
 /** The banner shown when a buyer returns from Stripe, or null. Built from query params and the ledger only. */
 async function portalNotice(url: URL, env: Env): Promise<{ tone: 'ok' | 'info'; text: string } | null> {
@@ -1911,11 +1926,13 @@ function renderClearinghousePortalHtml(
           </form>${topupsOpen(env) ? '' : '-->'}
           <form class="card tb-form" data-kind="pass">
             <h3>Pro or Agency pass</h3>
-            <label>Developer ID <input name="account" placeholder="dev_..." autocomplete="off" pattern="dev_[0-9a-f]{20}"></label>
+            <p><strong>1. New here? Create your developer account.</strong></p>
             <label>Email <input name="email" type="email" autocomplete="email"></label>
             <label>Name <input name="owner" autocomplete="name"></label>
             <label>Base wallet that receives payments (your payTo) <input name="payout" placeholder="0x..." autocomplete="off" pattern="0x[0-9a-fA-F]{40}"></label>
-            <button class="btn btn-ghost" type="button" data-register="developer">No account yet? Create one</button>
+            <button class="btn btn-ghost" type="button" data-register="developer">Create my account</button>
+            <p><strong>2. Choose your pass.</strong> Already have an account? Enter its developer ID.</p>
+            <label>Developer ID <input name="account" placeholder="dev_..." autocomplete="off" pattern="dev_[0-9a-f]{20}" required></label>
             <label>Pass <select name="tier"><option value="pro">Pro &middot; $39 once</option><option value="agency">Agency &middot; $79 once</option></select></label>
             <button class="btn btn-primary" type="submit">Buy pass</button>
           </form>
@@ -1924,7 +1941,7 @@ function renderClearinghousePortalHtml(
       </div>
     </section>`
     : '';
-  const topupAction = !showBuy || !topupsOpen(env) ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Fund Agent Wallet ($10)</a>' : env.STRIPE_PAYMENT_LINK_TOPUP_10
+  const topupAction = !topupsOpen(env) ? '' : !showBuy ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Fund Agent Wallet ($10)</a>' : env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
     : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>`;
 
@@ -1942,17 +1959,17 @@ function renderClearinghousePortalHtml(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
-  <title>Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
+  <title>Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
   <meta name="description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
   <link rel="canonical" href="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Red Center Studio" />
-  <meta property="og:title" content="Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402" />
+  <meta property="og:title" content="Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402" />
   <meta property="og:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
   <meta property="og:url" content="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Agent Tollbooth 402 — Charge AI Agents with HTTP 402 and x402" />
+  <meta name="twitter:title" content="Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402" />
   <meta name="twitter:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
   <meta name="twitter:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <script type="application/ld+json">${renderPortalStructuredDataJsonLd()}</script>
@@ -2466,14 +2483,14 @@ function renderClearinghousePortalHtml(
             <div class="proof-inner">
               <div class="proof-chrome">
                 <span class="proof-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-                <span class="proof-title">tollbooth.redcenterstudio.com &mdash; Setup &amp; 402 Flow</span>
+                <span class="proof-title">tollbooth.redcenterstudio.com: Setup &amp; 402 Flow</span>
                 <button id="proof-toggle" class="proof-play" type="button">Pause</button>
               </div>
               <div class="proof-tabs" role="tablist" aria-label="Walkthrough steps">
                 <button class="proof-tab" type="button" role="tab" aria-selected="true" data-step="0">1. Install</button>
                 <button class="proof-tab" type="button" role="tab" aria-selected="false" data-step="1">2. Wrap Route</button>
                 <button class="proof-tab" type="button" role="tab" aria-selected="false" data-step="2">3. 402 Challenge</button>
-                <button class="proof-tab" type="button" role="tab" aria-selected="false" data-step="3">4. &lt;1ms Settle</button>
+                <button class="proof-tab" type="button" role="tab" aria-selected="false" data-step="3">4. Paid</button>
               </div>
               <div class="proof-stage">
                 <span id="proof-badge" class="proof-status">Step 1 &middot; Claude Code &amp; Antigravity</span>
@@ -2489,7 +2506,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               </div>
             </div>
           </div>
-          <figcaption>Interactive walkthrough: install the plugin, wrap a route, issue HTTP 402 challenges, and settle in under 1ms.</figcaption>
+          <figcaption>Interactive walkthrough: install the plugin, wrap a route, issue HTTP 402 challenges, and settle USDC to your wallet.</figcaption>
         </figure>
       </div>
       <span class="strata" aria-hidden="true"></span>
@@ -2857,12 +2874,18 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
     document.querySelectorAll('[data-register]').forEach((b) => b.addEventListener('click', async () => {
       const form = b.closest('form');
       const isWallet = b.dataset.register === 'wallet';
+      if (!isWallet && !/^0x[0-9a-fA-F]{40}$/.test(form.elements.payout.value.trim())) {
+        out.textContent = 'Add the Base wallet address (0x followed by 40 characters) that will receive your payments.';
+        out.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       const body = isWallet ? {} : { email: form.elements.email.value, name: form.elements.owner.value, payoutAddress: form.elements.payout.value.trim() || undefined };
       const [ok, j] = await post(isWallet ? '/wallet/register' : '/developer/register', body);
       if (!ok) { out.textContent = j.fix_hint || 'Could not create the account.'; return; }
       form.elements.account.value = isWallet ? j.walletId : j.developerId;
       out.textContent = (isWallet ? 'Wallet ' + j.walletId + '. Wallet key (shown once, save it now): ' + j.walletKey
-        : 'Developer ' + j.developerId + '. Developer key (shown once, save it now): ' + j.developerKey);
+        : 'Account created: ' + j.developerId + '. Developer key (shown once, save it now): ' + j.developerKey + '. Now choose your pass.');
+      out.scrollIntoView({ block: 'nearest' });
     }));
     document.querySelectorAll('.tb-form').forEach((form) => form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2904,10 +2927,10 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
           caption: 'AI agents receive strict x402 V2 JSON headers; browsers see a Red Center checkout card.'
         },
         {
-          badge: 'Step 4 \\u00b7 <1ms Edge Settlement',
+          badge: 'Step 4 \\u00b7 Paid and settled',
           challenge: false,
-          code: 'Authorization: Bearer rcs_receipt_live_8f92...\\n-> Web Crypto Ed25519 verified in 0.4ms\\n-> D1 used_nonces replay protection committed\\n\\nHTTP/1.1 200 OK  |  PAYMENT-RESPONSE: { "success": true }',
-          caption: 'Signed receipts verify locally at the edge and block replay attacks automatically.'
+          code: 'PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6Miwic2NoZW1lIjoiZXhhY3Qi...\\n-> USDC authorization verified\\n-> settled on Base to your payTo wallet\\n\\nHTTP/1.1 200 OK  |  PAYMENT-RESPONSE: { "success": true }',
+          caption: 'The agent retries with a signed USDC payment. It settles to your wallet, the nonce is spent, and the route answers 200.'
         }
       ];
       var activeStep = 0;

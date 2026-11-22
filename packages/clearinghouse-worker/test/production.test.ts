@@ -394,6 +394,15 @@ describe('Production mode: self-serve accounts, scoped keys and Ed25519 receipts
     expect(passPage).toContain('Buy a pass.');
     expect(passPage).toContain('name="payout"');
     expect(passPage).toContain('<!--<form class="card tb-form" data-kind="topup">');
+    expect(passPage).not.toContain('Opens soon');
+
+    // A pass is never sold to an account without a payout wallet: it could not unlock anything.
+    const noWallet = (await (
+      await worker.fetch(post('/developer/register', { email: 'nowallet@example.com', name: 'No Wallet' }), passesOnly, ctx)
+    ).json()) as { developerId: string };
+    const refused = await worker.fetch(post('/wallet/topup', { developerId: noWallet.developerId, passTier: 'pro' }), passesOnly, ctx);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe('payout_address_required');
 
     const open: Env = { ...withStripe, PAID_SALES_OPEN: 'true', STUDIO_DEVELOPER_IDS: 'dev_studio' };
     const missing = await worker.fetch(post('/wallet/topup', { walletId: 'wallet_00000000000000000000', amountUsd: 10 }), open, ctx);
