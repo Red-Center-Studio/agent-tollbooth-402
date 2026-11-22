@@ -23,6 +23,8 @@ const TEST_ENV_SECRETS = {
   CLEARINGHOUSE_API_KEY: 'rcs_test_clearinghouse_api_key_placeholder',
   FACILITATOR_HMAC_SECRET: 'rcs_test_facilitator_hmac_secret_placeholder',
   STRIPE_CONNECT_WEBHOOK_SECRET: 'whsec_test_placeholder_signing_secret',
+  // The fiat-rail flows below pay these fixture developers, so they stand in for studio-owned accounts.
+  STUDIO_DEVELOPER_IDS: 'dev_hybrid, dev_pro,dev_free',
 };
 
 const mockCtx = {

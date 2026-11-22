@@ -227,6 +227,29 @@ describe('Production mode: self-serve accounts, scoped keys and Ed25519 receipts
     const dev = (await (
       await worker.fetch(post('/developer/register', { email: 'dev@example.com', name: 'Dev Co' }), env, ctx)
     ).json()) as { developerId: string; developerKey: string };
+
+    // A self-registered developer is not studio-owned: the card-funded wallet cannot pay them, and nothing is debited.
+    const notStudio = await worker.fetch(
+      post(
+        '/wallet/issue-receipt',
+        { walletId, developerId: dev.developerId, audience: 'https://api.example.com', amountMicros: 10_000 },
+        { Authorization: `Bearer ${walletKey}` },
+      ),
+      env,
+      ctx,
+    );
+    expect(notStudio.status).toBe(403);
+    expect((await notStudio.json()) as { error: string; code: string }).toMatchObject({
+      error: 'fiat_wallet_studio_routes_only',
+      code: 'RAIL_NOT_AVAILABLE',
+    });
+    const afterRefusal = raw.prepare('SELECT balance_micros FROM agent_wallets WHERE id = ?').get(walletId) as {
+      balance_micros: number;
+    };
+    expect(afterRefusal.balance_micros).toBe(5_000_000);
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM ledger_entries').get()).toEqual({ n: 0 });
+
+    env.STUDIO_DEVELOPER_IDS = dev.developerId;
     const issue = await worker.fetch(
       post(
         '/wallet/issue-receipt',

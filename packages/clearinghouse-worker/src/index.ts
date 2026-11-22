@@ -49,6 +49,8 @@ export interface Env extends UpstreamEnv, Ed25519Env {
   STRIPE_PRICE_AGENCY_PASS?: string;
   /** 'true' opens paid checkout. Any other value keeps wallet top-ups and passes closed. */
   PAID_SALES_OPEN?: string;
+  /** Comma-separated developer ids owned by Red Center Studio. Fiat Agent Wallets pay only these. */
+  STUDIO_DEVELOPER_IDS?: string;
   STRIPE_PAYMENT_LINK_TOPUP_10?: string;
   STRIPE_PAYMENT_LINK_PRO_PASS?: string;
   STRIPE_PAYMENT_LINK_AGENCY_PASS?: string;
@@ -297,6 +299,12 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
       return {
         code: 'INVALID_SIGNATURE',
         fix_hint: `Verify x402 V2 signature, network, payTo, and scheme (${reason}).`,
+      };
+    case 'fiat_wallet_studio_routes_only':
+      return {
+        code: 'RAIL_NOT_AVAILABLE',
+        fix_hint:
+          'Fiat Agent Wallets pay only for Red Center Studio routes. Accept x402 USDC on Base instead: set payTo to your own wallet and agents pay you directly, 0% fee.',
       };
     default:
       return {
@@ -876,6 +884,18 @@ async function issueWalletReceiptInternal(
       },
     };
   }
+  // Card-funded wallet money is held by Red Center Studio, and there is no way to pay it out to other developers
+  // (Stripe Connect from an Australian platform reaches Australian accounts only). So the fiat rail only pays the
+  // studio's own developer accounts; everyone else is paid directly on chain through x402.
+  if (!studioDeveloperIds(env).has(developer.id)) {
+    return {
+      status: 403,
+      payload: {
+        error: 'fiat_wallet_studio_routes_only',
+        ...resolveClearinghouseGuidance('fiat_wallet_studio_routes_only'),
+      },
+    };
+  }
   if (developer.tier === 'free') {
     return {
       status: 403,
@@ -1300,6 +1320,16 @@ function hasRealStripeKey(env: Env): boolean {
     env.STRIPE_SECRET_KEY &&
       (env.STRIPE_SECRET_KEY.startsWith('sk_') || env.STRIPE_SECRET_KEY.startsWith('rk_')) &&
       !env.STRIPE_SECRET_KEY.includes('placeholder'),
+  );
+}
+
+/** Developer accounts owned by Red Center Studio: the only ones a Fiat Agent Wallet may pay. Empty means none. */
+function studioDeveloperIds(env: Env): Set<string> {
+  return new Set(
+    (env.STUDIO_DEVELOPER_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   );
 }
 
