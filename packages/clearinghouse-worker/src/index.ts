@@ -312,6 +312,12 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
         fix_hint:
           'Hosted Base mainnet settlement needs a Pro or Agency Pass on the developer account whose payout address is payTo (https://tollbooth.redcenterstudio.com/pay). Base Sepolia stays free, or settle mainnet through your own facilitator.',
       };
+    case 'monthly_hosted_allowance_reached':
+      return {
+        code: 'ALLOWANCE_REACHED',
+        fix_hint:
+          'This pass has used its 10,000 hosted Base mainnet settlements for this month. Nothing was charged. Settle through your own facilitator until the 1st of next month (UTC), or email hello@redcenterstudio.com for a larger plan.',
+      };
     case 'fiat_wallet_studio_routes_only':
       return {
         code: 'RAIL_NOT_AVAILABLE',
@@ -750,6 +756,23 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
       },
       402,
     );
+  }
+
+  // Each pass includes a monthly allowance of hosted mainnet settlements: the studio pays the facilitator per
+  // settlement, and a pass is paid once. Studio-owned accounts are not limited.
+  if (MAINNET_NETWORKS.has(req.network) && verification.developer && !studioDeveloperIds(env).has(verification.developer.id)) {
+    const used = await hostedMainnetSettlementsThisMonth(env, verification.developer.id);
+    if (used >= HOSTED_MONTHLY_ALLOWANCE) {
+      return jsonWithCors(
+        {
+          success: false,
+          txHash: null,
+          errorReason: 'monthly_hosted_allowance_reached',
+          ...resolveClearinghouseGuidance('monthly_hosted_allowance_reached'),
+        },
+        429,
+      );
+    }
   }
 
   const sandbox = isSandboxEnv(env);
@@ -1348,6 +1371,22 @@ function hasRealStripeKey(env: Env): boolean {
   );
 }
 
+/** Hosted Base mainnet settlements included with a pass each UTC calendar month. */
+const HOSTED_MONTHLY_ALLOWANCE = 10_000;
+
+/** Successful hosted mainnet settlements for one developer since the start of this UTC month. */
+async function hostedMainnetSettlementsThisMonth(env: Env, developerId: string): Promise<number> {
+  const now = new Date();
+  const monthStart = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM ledger_entries WHERE developer_id = ? AND rail = 'x402' AND entry_type = 'settlement'
+       AND created_at >= ? AND metadata_json LIKE '%"network":"eip155:8453"%'`,
+  )
+    .bind(developerId, monthStart)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 /** Networks where hosted settlement moves real money and needs a Pro or Agency Pass. */
 const MAINNET_NETWORKS = new Set(['eip155:8453']);
 
@@ -1747,7 +1786,7 @@ function renderPortalStructuredDataJsonLd(): string {
             name: 'What does the Pro Pass add?',
             acceptedAnswer: {
               '@type': 'Answer',
-              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It also adds earnings history and per-call metered pricing. The Agency Pass is $79 USD once and covers multiple projects.',
+              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It includes up to 10,000 hosted settlements a month and adds earnings history and per-call metered pricing. The Agency Pass is $79 USD once and covers multiple projects.',
             },
           },
           {
@@ -1824,7 +1863,7 @@ function renderLlmsTxt(): string {
     '',
     '## Clearinghouse Pricing',
     '- Free (DIY): $0 USD. The MCP server, plugin and skills, edge middleware, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. 0% fee.',
-    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history and per-call metered pricing. Needs the developer account payout address to equal your payTo address.',
+    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), up to 10,000 hosted settlements a month, earnings history and per-call metered pricing. Needs the developer account payout address to equal your payTo address.',
     '- Agency Pass: $79 USD once. The same as Pro for multiple projects and client sites.',
     '- Payments always go straight to your own payTo wallet in USDC. Red Center Studio never holds your money and takes 0% of payments.',
     '- Done-For-You Setup: From $499 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
@@ -2575,7 +2614,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               </tr>
               <tr>
                 <td><strong>Tollbooth Pro Pass</strong></td>
-                <td>Hosted Base mainnet settlement through tollbooth.redcenterstudio.com, with no Coinbase developer account, keys or facilitator server of your own. Earnings history. One project</td>
+                <td>Hosted Base mainnet settlement through tollbooth.redcenterstudio.com, with no Coinbase developer account, keys or facilitator server of your own. Up to 10,000 settlements a month. Earnings history. One project</td>
                 <td>0% fee</td>
                 <td>$39 USD once</td>
               </tr>
@@ -2622,6 +2661,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             <p>Hosted Base mainnet settlement for one project. Payments still go straight to your wallet.</p>
             <ul class="tier-list">
               <li>No Coinbase account or facilitator server</li>
+              <li>Up to 10,000 hosted payments a month</li>
               <li>Earnings history for every payment</li>
               <li>Needs your payout address to equal <code>payTo</code></li>
             </ul>
@@ -2637,7 +2677,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             <div class="price">$79 once &middot; 0% fee</div>
             <p>The same as Pro, for multiple projects and client sites.</p>
             <ul class="tier-list">
-              <li>Hosted Base mainnet settlement</li>
+              <li>Hosted Base mainnet settlement, up to 10,000 payments a month</li>
               <li>Earnings history for every payment</li>
               <li>Payments go straight to each wallet</li>
             </ul>
@@ -2818,7 +2858,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             </details>
             <details>
               <summary>What does the Pro Pass add?</summary>
-              <p>It is $39 USD once, for one project. It turns on hosted Base mainnet settlement, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. The Agency Pass is $79 USD once for multiple projects.</p>
+              <p>It is $39 USD once, for one project. It turns on hosted Base mainnet settlement, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It includes up to 10,000 hosted settlements a month. The Agency Pass is $79 USD once for multiple projects.</p>
             </details>
             <details>
               <summary>Is testing free?</summary>

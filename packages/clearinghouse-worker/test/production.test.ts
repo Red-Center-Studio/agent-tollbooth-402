@@ -155,6 +155,29 @@ describe('Production mode: real x402 verification and settlement', () => {
     expect(res.status).toBe(503);
     expect(((await res.json()) as { errorReason: string }).errorReason).toBe('settlement_not_configured');
     expect(raw.prepare('SELECT COUNT(*) AS n FROM used_nonces').get()).toMatchObject({ n: 0 });
+
+    // The monthly allowance: 10,000 hosted mainnet settlements this UTC month. Testnet and last month do not count.
+    const insert = raw.prepare(
+      "INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, NULL, 'dev_nopass', NULL, 'x402', 'settlement', 10000, 0, 0, 10000, 'tx', ?, ?)",
+    );
+    const mainnetMeta = JSON.stringify({ network: 'eip155:8453', payer: '0x0', sandbox: false });
+    const testnetMeta = JSON.stringify({ network: 'eip155:84532', payer: '0x0', sandbox: false });
+    const lastMonth = now - 40 * 86400;
+    raw.exec('BEGIN');
+    for (let i = 0; i < 9_999; i++) insert.run(`led_m${i}`, `idem_m${i}`, mainnetMeta, now);
+    for (let i = 0; i < 50; i++) insert.run(`led_t${i}`, `idem_t${i}`, testnetMeta, now);
+    for (let i = 0; i < 50; i++) insert.run(`led_o${i}`, `idem_o${i}`, mainnetMeta, lastMonth);
+    raw.exec('COMMIT');
+    const under = await worker.fetch(post('/settle', signedPayment(makePayer(), { network: 'eip155:8453' }).body), env, ctx);
+    expect(under.status).toBe(503); // 9,999 used: still allowed, reaches the facilitator check
+    insert.run('led_m_last', 'idem_m_last', mainnetMeta, now);
+    const over = await worker.fetch(post('/settle', signedPayment(makePayer(), { network: 'eip155:8453' }).body), env, ctx);
+    expect(over.status).toBe(429);
+    expect(((await over.json()) as { errorReason: string; code: string })).toMatchObject({
+      errorReason: 'monthly_hosted_allowance_reached',
+      code: 'ALLOWANCE_REACHED',
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM used_nonces').get()).toMatchObject({ n: 0 });
   });
 
   it('settles Base Sepolia through the upstream facilitator and records the real transaction', async () => {
