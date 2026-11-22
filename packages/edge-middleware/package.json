@@ -1,7 +1,7 @@
 {
   "name": "@redcenterstudio/agent-tollbooth-edge",
   "version": "1.1.0",
-  "description": "Zero-dependency dual-rail HTTP 402 middleware (x402 V2 + <1ms Red Center Fiat Agent Wallet verification) for Cloudflare Workers and Hono.",
+  "description": "HTTP 402 middleware for Cloudflare Workers and Hono: AI agents pay per call in USDC over x402 V2, straight to your own Base wallet. 0% fee.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
