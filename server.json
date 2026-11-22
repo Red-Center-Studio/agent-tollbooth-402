@@ -2,13 +2,13 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Red-Center-Studio/agent-tollbooth-402",
   "title": "Agent Tollbooth 402",
-  "description": "HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and earnings history for APIs & MCP. Agents pay your own wallet in USDC.",
+  "description": "HTTP 402 & x402 V2 billing for APIs & MCP servers. Agents pay your own wallet in USDC at 0% fee. Pricing quotes, pass checkout and earnings history.",
   "websiteUrl": "https://tollbooth.redcenterstudio.com/pay",
   "repository": {
     "url": "https://github.com/Red-Center-Studio/agent-tollbooth-402",
     "source": "github"
   },
-  "version": "1.1.0",
+  "version": "1.2.0",
   "remotes": [
     {
       "type": "streamable-http",
