@@ -300,6 +300,12 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
         code: 'INVALID_SIGNATURE',
         fix_hint: `Verify x402 V2 signature, network, payTo, and scheme (${reason}).`,
       };
+    case 'pass_required_for_mainnet_settlement':
+      return {
+        code: 'PRO_PASS_REQUIRED',
+        fix_hint:
+          'Hosted Base mainnet settlement needs a Pro or Agency Pass on the developer account whose payout address is payTo (https://tollbooth.redcenterstudio.com/pay). Base Sepolia stays free, or settle mainnet through your own facilitator.',
+      };
     case 'fiat_wallet_studio_routes_only':
       return {
         code: 'RAIL_NOT_AVAILABLE',
@@ -724,6 +730,20 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
         ...resolveClearinghouseGuidance('settle_amount_out_of_range'),
       },
       400,
+    );
+  }
+
+  // Hosted settlement of real money (Base mainnet) is what the Pro and Agency Pass buy. Testnet stays free, and
+  // anyone can settle mainnet through their own facilitator. The payment itself always goes straight to payTo.
+  if (MAINNET_NETWORKS.has(req.network) && !hasHostedMainnetAccess(verification.developer ?? null, env)) {
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'pass_required_for_mainnet_settlement',
+        ...resolveClearinghouseGuidance('pass_required_for_mainnet_settlement'),
+      },
+      402,
     );
   }
 
@@ -1321,6 +1341,15 @@ function hasRealStripeKey(env: Env): boolean {
       (env.STRIPE_SECRET_KEY.startsWith('sk_') || env.STRIPE_SECRET_KEY.startsWith('rk_')) &&
       !env.STRIPE_SECRET_KEY.includes('placeholder'),
   );
+}
+
+/** Networks where hosted settlement moves real money and needs a Pro or Agency Pass. */
+const MAINNET_NETWORKS = new Set(['eip155:8453']);
+
+/** Pass holders, and the studio's own accounts, may settle mainnet payments through the hosted facilitator. */
+function hasHostedMainnetAccess(developer: DeveloperRow | null, env: Env): boolean {
+  if (!developer) return false;
+  return developer.tier === 'pro' || developer.tier === 'agency' || studioDeveloperIds(env).has(developer.id);
 }
 
 /** Developer accounts owned by Red Center Studio: the only ones a Fiat Agent Wallet may pay. Empty means none. */

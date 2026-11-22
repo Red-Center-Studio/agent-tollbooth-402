@@ -126,10 +126,32 @@ describe('Production mode: real x402 verification and settlement', () => {
     expect(uptoRes.invalidReason).toBe('upto_not_supported_onchain');
   });
 
-  it('refuses mainnet settlement when no facilitator is configured, without spending the nonce', async () => {
-    const payer = makePayer();
-    const p = signedPayment(payer, { network: 'eip155:8453' });
-    const res = await worker.fetch(post('/settle', p.body), env, ctx);
+  it('settles mainnet only for pass holders, and spends no nonce when it refuses', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const addDev = (id: string, tier: string, payout: string) =>
+      raw
+        .prepare(
+          "INSERT INTO developers (id, email, name, tier, stripe_account_id, payout_address, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)",
+        )
+        .run(id, `${id}@example.com`, id, tier, payout, now);
+
+    // Unknown payTo: no developer account, no pass.
+    const unknown = await worker.fetch(post('/settle', signedPayment(makePayer(), { network: 'eip155:8453' }).body), env, ctx);
+    expect(unknown.status).toBe(402);
+    expect(((await unknown.json()) as { errorReason: string; code: string })).toMatchObject({
+      errorReason: 'pass_required_for_mainnet_settlement',
+      code: 'PRO_PASS_REQUIRED',
+    });
+
+    // A registered developer without a pass is refused too.
+    addDev('dev_nopass', 'hybrid', PAY_TO);
+    const noPass = await worker.fetch(post('/settle', signedPayment(makePayer(), { network: 'eip155:8453' }).body), env, ctx);
+    expect(noPass.status).toBe(402);
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM used_nonces').get()).toMatchObject({ n: 0 });
+
+    // With a Pro Pass the pass gate opens; the next check is the facilitator itself.
+    raw.prepare("UPDATE developers SET tier = 'pro' WHERE id = 'dev_nopass'").run();
+    const res = await worker.fetch(post('/settle', signedPayment(makePayer(), { network: 'eip155:8453' }).body), env, ctx);
     expect(res.status).toBe(503);
     expect(((await res.json()) as { errorReason: string }).errorReason).toBe('settlement_not_configured');
     expect(raw.prepare('SELECT COUNT(*) AS n FROM used_nonces').get()).toMatchObject({ n: 0 });
