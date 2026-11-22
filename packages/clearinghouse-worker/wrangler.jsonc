@@ -21,7 +21,7 @@
   "vars": {
     "PRO_PASS_URL": "https://tollbooth.redcenterstudio.com/pay",
     "ENVIRONMENT": "production",
-    "PAID_SALES_OPEN": "false",
+    "PAID_SALES_OPEN": "true",
     "STRIPE_WEBHOOK_ENDPOINT_ID": "we_1UcxFBHEzENMJ5rpKmaaJeGp",
     "STRIPE_PRICE_TOPUP_10": "price_1UcxIZHEzENMJ5rpmbOcFzrV",
     "STRIPE_PRICE_PRO_PASS": "price_1UcxKKHEzENMJ5rpCd2Sl0Sw",
