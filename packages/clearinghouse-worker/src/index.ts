@@ -1701,7 +1701,7 @@ function renderPortalStructuredDataJsonLd(): string {
             name: 'What does the Pro Pass add?',
             acceptedAnswer: {
               '@type': 'Answer',
-              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It also adds earnings history, signed receipts, per-call metered pricing and custom 402 page HTML. The Agency Pass is $79 USD once and covers multiple projects.',
+              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It also adds earnings history and per-call metered pricing. The Agency Pass is $79 USD once and covers multiple projects.',
             },
           },
           {
@@ -1778,7 +1778,7 @@ function renderLlmsTxt(): string {
     '',
     '## Clearinghouse Pricing',
     '- Free (DIY): $0 USD. The MCP server, plugin and skills, edge middleware, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. 0% fee.',
-    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history, signed receipts, per-call metered pricing and custom 402 page HTML. Needs the developer account payout address to equal your payTo address.',
+    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history and per-call metered pricing. Needs the developer account payout address to equal your payTo address.',
     '- Agency Pass: $79 USD once. The same as Pro for multiple projects and client sites.',
     '- Payments always go straight to your own payTo wallet in USDC. Red Center Studio never holds your money and takes 0% of payments.',
     '- Done-For-You Setup: From $499 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
@@ -2527,7 +2527,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               </tr>
               <tr>
                 <td><strong>Tollbooth Pro Pass</strong></td>
-                <td>Hosted Base mainnet settlement through tollbooth.redcenterstudio.com, with no Coinbase developer account, keys or facilitator server of your own. Earnings history and signed receipts. One project</td>
+                <td>Hosted Base mainnet settlement through tollbooth.redcenterstudio.com, with no Coinbase developer account, keys or facilitator server of your own. Earnings history. One project</td>
                 <td>0% fee</td>
                 <td>$39 USD once</td>
               </tr>
@@ -2574,7 +2574,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             <p>Hosted Base mainnet settlement for one project. Payments still go straight to your wallet.</p>
             <ul class="tier-list">
               <li>No Coinbase account or facilitator server</li>
-              <li>Earnings history and signed receipts</li>
+              <li>Earnings history for every payment</li>
               <li>Needs your payout address to equal <code>payTo</code></li>
             </ul>
             <span class="spacer"></span>
@@ -2590,7 +2590,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             <p>The same as Pro, for multiple projects and client sites.</p>
             <ul class="tier-list">
               <li>Hosted Base mainnet settlement</li>
-              <li>Earnings history and signed receipts</li>
+              <li>Earnings history for every payment</li>
               <li>Payments go straight to each wallet</li>
             </ul>
             <span class="spacer"></span>

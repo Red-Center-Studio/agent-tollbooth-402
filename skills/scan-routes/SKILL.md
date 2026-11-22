@@ -42,7 +42,7 @@ Never propose `402` gating on `OPTIONS` preflight, `/health`, `/readyz`, `/webho
 | Tier | Pricing | Fee on your payments | Capabilities Unlocked |
 | :--- | :--- | :--- | :--- |
 | **Free (DIY)** | `$0` | `0%` | The connector, plugin and skills, edge middleware, `/test-agent`, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. |
-| **Tollbooth Pro Pass** | `$39` one-time, one project | `0%` | Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history and signed receipts, `upto` dynamic metering and custom HTML 402 pages. Payments still go straight to your wallet. |
+| **Tollbooth Pro Pass** | `$39` one-time, one project | `0%` | Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history and `upto` dynamic metering. Payments still go straight to your wallet. |
 | **Agency Pass** | `$79` one-time | `0%` | The same as Pro for multiple projects and client sites. |
 | **Done-For-You Integration** | From `$499` | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping by Red Center Studio (`https://redcenterstudio.com`). |
 

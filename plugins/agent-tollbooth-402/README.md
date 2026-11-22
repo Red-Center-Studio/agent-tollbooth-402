@@ -26,7 +26,7 @@ Built by [Red Center Studio](https://redcenterstudio.com) · [Portal & Documenta
 | Tier | Fee on your payments | What You Get |
 | :--- | :--- | :--- |
 | **Free (DIY)** | **`0%` fee** | Connector, plugin and skills, edge middleware, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. Agents pay your `payTo` wallet directly |
-| **Tollbooth Pro Pass (`$39` once, one project)** | **`0%` fee** | Hosted Base mainnet settlement (no Coinbase account or facilitator server of your own), earnings history, signed receipts, `upto` metering and custom 402 pages. Payments still go straight to your wallet |
+| **Tollbooth Pro Pass (`$39` once, one project)** | **`0%` fee** | Hosted Base mainnet settlement (no Coinbase account or facilitator server of your own), earnings history and `upto` metering. Payments still go straight to your wallet |
 | **Agency Pass (`$79` once)** | **`0%` fee** | The same as Pro for multiple projects and client sites |
 | **Done-For-You Integration** | Custom (`From $499`) | Full custom MCP + HTTP 402 setup by [Red Center Studio](https://redcenterstudio.com/services/ai-tollbooth-setup/) |
 
