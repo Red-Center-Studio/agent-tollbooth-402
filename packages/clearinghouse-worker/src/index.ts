@@ -1520,6 +1520,8 @@ async function createTopupCheckoutInternal(
   if (hasLiveOrTestStripeKey && env.STRIPE_SECRET_KEY) {
     const form = new URLSearchParams();
     form.set('mode', 'payment');
+    // Same as the studio's Payment Links: Stripe Tax decides what to collect from the buyer's location.
+    form.set('automatic_tax[enabled]', 'true');
     form.set('success_url', successUrl);
     form.set('cancel_url', cancelUrl);
     if (stripePriceId) {

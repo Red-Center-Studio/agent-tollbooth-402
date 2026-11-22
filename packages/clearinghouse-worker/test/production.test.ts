@@ -459,6 +459,7 @@ describe('Production mode: self-serve accounts, scoped keys and Ed25519 receipts
     expect(ok.status).toBe(200);
     const form = new URLSearchParams(sent);
     expect(form.get('client_reference_id')).toBe(walletId);
+    expect(form.get('automatic_tax[enabled]')).toBe('true');
     expect(form.get('metadata[wallet_id]')).toBe(walletId);
     expect(form.get('success_url')).toBe(`${BASE}/pay?status=success&session_id={CHECKOUT_SESSION_ID}`);
     const openPage = await (await worker.fetch(new Request(`${BASE}/pay`), open, ctx)).text();
