@@ -27,6 +27,7 @@ import {
   resolveScopedKey,
   rotateKey,
   scopeAllows,
+  setPayoutAddress,
   type Ed25519Env,
   type KeyScope,
 } from './accounts.js';
@@ -289,7 +290,7 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
     case 'wallet_not_found':
       return {
         code: 'NOT_FOUND',
-        fix_hint: 'Verify the developerId / walletId exists in the clearinghouse D1 database.',
+        fix_hint: 'No account has that developer or wallet ID. Check it, or create an account first.',
       };
     case 'signature_mismatch':
     case 'missing_signature':
@@ -577,7 +578,7 @@ async function verifyX402Payload(
   }
 
   const developer = await env.DB.prepare(
-    'SELECT id, email, name, tier, payout_address FROM developers WHERE LOWER(payout_address) = LOWER(?) LIMIT 1',
+    "SELECT id, email, name, tier, payout_address FROM developers WHERE LOWER(payout_address) = LOWER(?) ORDER BY CASE WHEN tier IN ('pro', 'agency') THEN 0 ELSE 1 END, created_at LIMIT 1",
   )
     .bind(paymentRequirements.payTo)
     .first<DeveloperRow>();
@@ -1384,6 +1385,12 @@ async function createTopupCheckoutInternal(
   let productName: string;
   let stripePriceId: string | undefined;
 
+  if (body.passTier !== undefined && body.passTier !== 'pro' && body.passTier !== 'agency') {
+    return {
+      status: 400,
+      payload: { error: 'invalid_pass_tier', code: 'INVALID_REQUEST', fix_hint: 'passTier must be "pro" or "agency".' },
+    };
+  }
   if (body.passTier === 'pro' || body.passTier === 'agency') {
     kind = 'tier_upgrade';
     amountMicros = body.passTier === 'agency' ? 79_000_000 : 39_000_000;
@@ -1805,7 +1812,7 @@ function renderLlmsTxt(): string {
     toolLines,
     '',
     '## Accounts, Keys and Receipts',
-    '- Self-serve accounts: POST /wallet/register returns a wallet key (rcs_wk_...), POST /developer/register returns a developer key (rcs_dk_...). Keys are shown once; only hashes are stored. POST /keys/rotate replaces a key.',
+    '- Self-serve accounts: POST /wallet/register returns a wallet key (rcs_wk_...), POST /developer/register returns a developer key (rcs_dk_...). Keys are shown once; only hashes are stored. POST /keys/rotate replaces a key. POST /developer/payout (developer key) sets or corrects the payout wallet.',
     '- A wallet key reads its own balance and ledger and requests receipts that spend from that wallet only.',
     '- Rail B receipts are Ed25519-signed. Verify them with the public key at https://tollbooth.redcenterstudio.com/.well-known/tollbooth-jwks.json (fetchTollboothPublicKey() in the middleware).',
     '',
@@ -1895,7 +1902,7 @@ async function portalNotice(url: URL, env: Env): Promise<{ tone: 'ok' | 'info'; 
   }
   return {
     tone: 'ok',
-    text: 'Payment received. Your top-up or pass is applied within a minute. Check it with your wallet or developer key.',
+    text: 'Payment received. Your pass is active within a minute. Hosted Base mainnet settlement works for payments whose payTo is your account payout wallet. Check it with tollbooth_pass_status and your developer key.',
   };
 }
 
@@ -1960,17 +1967,17 @@ function renderClearinghousePortalHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
   <title>Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
-  <meta name="description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
+  <meta name="description" content="Charge AI agents per call with HTTP 402 and x402. USDC goes straight to your own wallet at 0% fee. Free DIY setup, go live on Base with a $39 Pro Pass." />
   <link rel="canonical" href="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Red Center Studio" />
   <meta property="og:title" content="Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402" />
-  <meta property="og:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
+  <meta property="og:description" content="Charge AI agents per call with HTTP 402 and x402. USDC goes straight to your own wallet at 0% fee. Free DIY setup, go live on Base with a $39 Pro Pass." />
   <meta property="og:url" content="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402" />
-  <meta name="twitter:description" content="Gate any Cloudflare Worker, Hono route, Next.js handler, or MCP server with HTTP 402 and x402 V2. Agents pay your own wallet in USDC. Free DIY setup, hosted Base mainnet with a $39 Pro Pass." />
+  <meta name="twitter:description" content="Charge AI agents per call with HTTP 402 and x402. USDC goes straight to your own wallet at 0% fee. Free DIY setup, go live on Base with a $39 Pro Pass." />
   <meta name="twitter:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <script type="application/ld+json">${renderPortalStructuredDataJsonLd()}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -2661,7 +2668,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
           <span class="label">DIY setup in 4 steps</span>
           <h3 style="margin-top:6px">From nothing to live payments.</h3>
           <ol class="tier-list" style="padding-left:0">
-            <li><strong>Register.</strong> Create a developer account with your Base wallet as the payout address: <code>POST /developer/register</code> or the connector.</li>
+            <li><strong>Register.</strong> Create a developer account with your Base wallet as the payout address: <code>POST /developer/register</code>, or step 1 of the form below. Fix a wrong wallet later with <code>POST /developer/payout</code>.</li>
             <li><strong>Install.</strong> Run <code>/install-tollbooth</code> in Claude Code, or add the middleware by hand, with <code>payTo</code> set to that wallet.</li>
             <li><strong>Test free.</strong> Run <code>/test-agent</code> and settle on Base Sepolia. It costs nothing.</li>
             <li><strong>Go live.</strong> Buy a Pro Pass to settle on Base mainnet through the hosted facilitator.</li>
@@ -2779,7 +2786,7 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               </tr>
               <tr>
                 <td>HTTP</td>
-                <td><code>POST /wallet/register</code>, <code>POST /developer/register</code>, <code>POST /keys/rotate</code></td>
+                <td><code>POST /wallet/register</code>, <code>POST /developer/register</code>, <code>POST /developer/payout</code>, <code>POST /keys/rotate</code></td>
                 <td>Self-serve accounts with scoped keys. Only key hashes are stored.</td>
               </tr>
               <tr>
@@ -3224,8 +3231,8 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
               status: 200,
               payload: {
                 developerId: dev.id,
-                tier: dev.tier,
-                fiatWalletFeeBps: dev.tier === 'pro' || dev.tier === 'agency' ? 300 : dev.tier === 'hybrid' ? 700 : null,
+                tier: dev.tier === 'pro' || dev.tier === 'agency' ? dev.tier : 'free',
+                hostedMainnetSettlement: dev.tier === 'pro' || dev.tier === 'agency',
                 uptoMetering: dev.tier === 'pro' || dev.tier === 'agency',
               },
             }
@@ -3439,6 +3446,22 @@ export default {
         return jsonWithCors(out.payload, out.status);
       }
 
+      if (request.method === 'POST' && url.pathname === '/developer/payout') {
+        const token = bearerToken(request);
+        const scope = token ? await resolveScopedKey(env.DB, token) : null;
+        if (!token || !scope) {
+          return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 401);
+        }
+        let body: { payoutAddress?: unknown };
+        try {
+          body = (await request.json()) as { payoutAddress?: unknown };
+        } catch {
+          return jsonWithCors({ error: 'invalid_json', ...resolveClearinghouseGuidance('invalid_json') }, 400);
+        }
+        const out = await setPayoutAddress(env.DB, scope, body);
+        return jsonWithCors(out.payload, out.status);
+      }
+
       if (request.method === 'GET' && (url.pathname === '/wallet/ledger' || url.pathname === '/developer/ledger')) {
         const scope = await requestScope(request, env);
         const own = scope?.kind === 'wallet' ? scope.walletId : scope?.kind === 'developer' ? scope.developerId : '';
@@ -3464,7 +3487,7 @@ export default {
           error: 'not_found',
           code: 'NOT_FOUND',
           fix_hint:
-            'Supported routes: GET /, GET /pay, GET /demo/402, GET /health, GET /llms.txt, GET /.well-known/mcp.json, GET /robots.txt, GET /sitemap.xml, GET /.well-known/tollbooth-jwks.json, POST /verify, POST /settle, POST /wallet/register, POST /developer/register, POST /keys/rotate, GET /wallet/ledger, GET /developer/ledger, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
+            'Supported routes: GET /, GET /pay, GET /demo/402, GET /health, GET /llms.txt, GET /.well-known/mcp.json, GET /robots.txt, GET /sitemap.xml, GET /.well-known/tollbooth-jwks.json, POST /verify, POST /settle, POST /wallet/register, POST /developer/register, POST /developer/payout, POST /keys/rotate, GET /wallet/ledger, GET /developer/ledger, POST /wallet/issue-receipt, POST /wallet/topup, POST /webhook/stripe, POST /mcp.',
         },
         404,
       );

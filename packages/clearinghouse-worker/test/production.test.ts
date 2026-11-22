@@ -336,9 +336,47 @@ describe('Production mode: self-serve accounts, scoped keys and Ed25519 receipts
     expect(dup.status).toBe(409);
     const status = (await (
       await worker.fetch(mcp('tollbooth_pass_status', { developerId: first.developerId }, first.developerKey), env, ctx)
-    ).json()) as { result: { structuredContent: { tier: string; fiatWalletFeeBps: number } } };
-    expect(status.result.structuredContent).toMatchObject({ tier: 'hybrid', fiatWalletFeeBps: 700 });
+    ).json()) as { result: { structuredContent: Record<string, unknown> } };
+    expect(status.result.structuredContent).toMatchObject({ tier: 'free', hostedMainnetSettlement: false });
+    expect(status.result.structuredContent).not.toHaveProperty('fiatWalletFeeBps');
     expect((await worker.fetch(mcp('tollbooth_pass_status', { developerId: first.developerId }), env, ctx)).status).toBe(401);
+  });
+
+  it('keeps each payout wallet on one account and lets the owner set or correct it', async () => {
+    const W1 = '0x' + '1a'.repeat(20);
+    const W2 = '0x' + '2b'.repeat(20);
+    const a = (await (
+      await worker.fetch(post('/developer/register', { email: 'w1@example.com', name: 'W1', payoutAddress: W1 }), env, ctx)
+    ).json()) as { developerId: string; developerKey: string; payoutAddress: string };
+    expect(a.payoutAddress).toBe(W1);
+
+    // Same wallet, any letter case, on a second account: refused.
+    const squat = await worker.fetch(
+      post('/developer/register', { email: 'w2@example.com', name: 'W2', payoutAddress: W1.toUpperCase().replace('0X', '0x') }),
+      env,
+      ctx,
+    );
+    expect(squat.status).toBe(409);
+    expect(((await squat.json()) as { error: string }).error).toBe('payout_address_in_use');
+
+    const b = (await (
+      await worker.fetch(post('/developer/register', { email: 'w3@example.com', name: 'W3' }), env, ctx)
+    ).json()) as { developerId: string; developerKey: string };
+    // Needs the account's own developer key.
+    expect((await worker.fetch(post('/developer/payout', { payoutAddress: W2 }), env, ctx)).status).toBe(401);
+    // Cannot take a wallet another account holds.
+    const taken = await worker.fetch(post('/developer/payout', { payoutAddress: W1 }, { Authorization: `Bearer ${b.developerKey}` }), env, ctx);
+    expect(taken.status).toBe(409);
+    const bad = await worker.fetch(post('/developer/payout', { payoutAddress: '0x123' }, { Authorization: `Bearer ${b.developerKey}` }), env, ctx);
+    expect(bad.status).toBe(400);
+    const set = await worker.fetch(post('/developer/payout', { payoutAddress: W2 }, { Authorization: `Bearer ${b.developerKey}` }), env, ctx);
+    expect(set.status).toBe(200);
+    const row = raw.prepare('SELECT payout_address FROM developers WHERE id = ?').get(b.developerId) as { payout_address: string };
+    expect(row.payout_address).toBe(W2);
+    // The owner may re-save their own wallet.
+    expect(
+      (await worker.fetch(post('/developer/payout', { payoutAddress: W1 }, { Authorization: `Bearer ${a.developerKey}` }), env, ctx)).status,
+    ).toBe(200);
   });
 
   it('fulfils Payment Link sessions from client_reference_id and waits for unpaid ones', async () => {

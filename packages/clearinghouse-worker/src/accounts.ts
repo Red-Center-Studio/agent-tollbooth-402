@@ -149,8 +149,14 @@ export async function registerDeveloper(
   if (!name) {
     return bad('missing_name', 'Give a name for the developer account (a person or a business).');
   }
+  if (email.length > 254) {
+    return bad('invalid_email', 'Give a valid email address.');
+  }
   if (payout && !ADDRESS_RE.test(payout)) {
-    return bad('invalid_payout_address', 'payoutAddress must be a 0x EVM address, or leave it out.');
+    return bad('invalid_payout_address', 'payoutAddress must be 0x followed by 40 hex characters.');
+  }
+  if (payout && (await payoutTaken(db, payout))) {
+    return payoutInUse();
   }
   const exists = await db.prepare('SELECT id FROM developers WHERE email = ? LIMIT 1').bind(email).first<{ id: string }>();
   if (exists) {
@@ -175,10 +181,43 @@ export async function registerDeveloper(
     payload: {
       developerId,
       developerKey,
-      tier: 'hybrid',
+      tier: 'free',
+      payoutAddress: payout || null,
       note: 'Save the developer key now: it is shown once. Send it as Authorization: Bearer <developerKey>.',
     },
   };
+}
+
+async function payoutTaken(db: D1Database, address: string, exceptDeveloperId = ''): Promise<boolean> {
+  const row = await db
+    .prepare('SELECT id FROM developers WHERE LOWER(payout_address) = LOWER(?) AND id != ? LIMIT 1')
+    .bind(address, exceptDeveloperId)
+    .first<{ id: string }>();
+  return Boolean(row);
+}
+
+function payoutInUse(): Outcome {
+  return bad(
+    'payout_address_in_use',
+    'Another developer account already uses this payout wallet. Each wallet belongs to one account; email hello@redcenterstudio.com if it is yours.',
+    409,
+  );
+}
+
+/** Sets or corrects a developer's payout wallet. Needs that developer's own key. */
+export async function setPayoutAddress(db: D1Database, scope: KeyScope, body: { payoutAddress?: unknown }): Promise<Outcome> {
+  if (scope.kind !== 'developer') {
+    return bad('developer_key_required', 'Use the developer key (rcs_dk_...) of the account to change.', 403);
+  }
+  const payout = typeof body.payoutAddress === 'string' ? body.payoutAddress.trim() : '';
+  if (!ADDRESS_RE.test(payout)) {
+    return bad('invalid_payout_address', 'payoutAddress must be 0x followed by 40 hex characters.');
+  }
+  if (await payoutTaken(db, payout, scope.developerId)) {
+    return payoutInUse();
+  }
+  await db.prepare('UPDATE developers SET payout_address = ? WHERE id = ?').bind(payout, scope.developerId).run();
+  return { status: 200, payload: { developerId: scope.developerId, payoutAddress: payout } };
 }
 
 /** Revokes the presented scoped key and issues a new one for the same wallet or developer. */

@@ -147,7 +147,7 @@
   {
     "name": "tollbooth_create_topup_checkout",
     "title": "Generate Checkout Link URL",
-    "description": "Return a Stripe Checkout or sandbox link URL that a user can open in a browser to fund a prepaid wallet for Red Center Studio routes ($1+) or purchase a Pro ($39) / Agency ($79) Pass for hosted Base mainnet settlement. Never charges automatically.",
+    "description": "Return a Stripe Checkout or sandbox link URL that a user can open in a browser to purchase a Pro ($39 USD once) or Agency ($79 USD once) Pass for hosted Base mainnet settlement. The developer account needs a payout wallet. Prepaid wallet top-ups are not open yet. Never charges automatically.",
     "annotations": {
       "title": "Generate Checkout Link URL",
       "readOnlyHint": true,
@@ -185,7 +185,7 @@
   {
     "name": "tollbooth_register_wallet",
     "title": "Register Agent Wallet",
-    "description": "Create an empty prepaid agent wallet (for Red Center Studio routes only) and return its wallet ID and wallet key (shown once). Moves no money; fund it later with tollbooth_create_topup_checkout.",
+    "description": "Create an empty prepaid agent wallet (for Red Center Studio routes only) and return its wallet ID and wallet key (shown once). Moves no money. Wallet top-ups are not open yet; developers are paid directly with x402 instead.",
     "annotations": {
       "title": "Register Agent Wallet",
       "readOnlyHint": false,
