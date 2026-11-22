@@ -230,7 +230,7 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
     case 'upto_not_supported_onchain':
       return {
         code: 'INVALID_REQUEST',
-        fix_hint: 'x402 on-chain payments use the exact scheme (EIP-3009). Use exact, or the Fiat Agent Wallet rail for metered upto pricing.',
+        fix_hint: 'x402 on-chain payments use the exact scheme (EIP-3009). Use the exact scheme with a fixed price per call.',
       };
     case 'unsupported_network':
     case 'asset_mismatch':
@@ -1786,7 +1786,7 @@ function renderPortalStructuredDataJsonLd(): string {
             name: 'What does the Pro Pass add?',
             acceptedAnswer: {
               '@type': 'Answer',
-              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It includes up to 10,000 hosted settlements a month and adds earnings history and per-call metered pricing. The Agency Pass is $79 USD once and covers multiple projects.',
+              text: 'The Pro Pass is $39 USD once, for one project. It turns on hosted Base mainnet settlement through tollbooth.redcenterstudio.com, so you need no Coinbase developer account, keys or facilitator server of your own. Payments still go straight to your wallet. It includes up to 10,000 hosted settlements a month and adds earnings history. The Agency Pass is $79 USD once and covers multiple projects.',
             },
           },
           {
@@ -1863,7 +1863,7 @@ function renderLlmsTxt(): string {
     '',
     '## Clearinghouse Pricing',
     '- Free (DIY): $0 USD. The MCP server, plugin and skills, edge middleware, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. 0% fee.',
-    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), up to 10,000 hosted settlements a month, earnings history and per-call metered pricing. Needs the developer account payout address to equal your payTo address.',
+    '- Tollbooth Pro Pass: $39 USD once, one project. Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), up to 10,000 hosted settlements a month and earnings history. Needs the developer account payout address to equal your payTo address.',
     '- Agency Pass: $79 USD once. The same as Pro for multiple projects and client sites.',
     '- Payments always go straight to your own payTo wallet in USDC. Red Center Studio never holds your money and takes 0% of payments.',
     '- Done-For-You Setup: From $499 USD (custom Cloudflare Worker + D1 handover via https://redcenterstudio.com/services/ai-tollbooth-setup/)',
@@ -3275,7 +3275,6 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
                 developerId: dev.id,
                 tier: dev.tier === 'pro' || dev.tier === 'agency' ? dev.tier : 'free',
                 hostedMainnetSettlement: dev.tier === 'pro' || dev.tier === 'agency',
-                uptoMetering: dev.tier === 'pro' || dev.tier === 'agency',
               },
             }
           : { status: 404, payload: { error: 'developer_not_found', ...resolveClearinghouseGuidance('developer_not_found') } };

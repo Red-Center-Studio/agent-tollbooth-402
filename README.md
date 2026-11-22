@@ -82,7 +82,7 @@ flowchart LR
 | Tier | Price | Fee on your payments | What You Get |
 | :--- | :--- | :--- | :--- |
 | **Free (DIY)** | **`$0`** | **`0%`** | The connector (MCP server), plugin and skills (`/install-tollbooth`, `/scan-routes`, `/test-agent`), edge middleware, hosted settlement on Base Sepolia testnet (`eip155:84532`), and Base mainnet through your own facilitator. |
-| **Tollbooth Pro Pass** | **`$39`** one-time, one project | **`0%`** | Hosted Base mainnet (`eip155:8453`) settlement through `tollbooth.redcenterstudio.com`: no Coinbase developer account, keys or facilitator server of your own. Earnings history (`/developer/ledger`, `tollbooth_ledger_history`) and `upto` metering. Needs the developer account `payoutAddress` to equal your `payTo`. |
+| **Tollbooth Pro Pass** | **`$39`** one-time, one project | **`0%`** | Hosted Base mainnet (`eip155:8453`) settlement through `tollbooth.redcenterstudio.com`: no Coinbase developer account, keys or facilitator server of your own. Up to 10,000 hosted settlements a month. Earnings history (`/developer/ledger`, `tollbooth_ledger_history`). Needs the developer account `payoutAddress` to equal your `payTo`. |
 | **Agency Pass** | **`$79`** one-time | **`0%`** | The same as Pro for multiple projects and client sites. |
 | **Done-For-You Integration** | **From `$499`** | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping, D1 ledger setup, and verification by [Red Center Studio](https://redcenterstudio.com). |
 

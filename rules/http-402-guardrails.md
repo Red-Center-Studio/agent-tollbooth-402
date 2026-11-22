@@ -31,6 +31,6 @@ Apply these mandatory engineering rules whenever modifying HTTP 402 paywalls, x4
 - Never use IEEE-754 floats in SQLite `CHECK` constraints, balance debits, or fee splits.
 
 ## 6. Spend Caps, `upto` Ceilings, and Secrets Hygiene
-- On metered `upto` routes (Tollbooth Pro Pass / Agency), clamp settled charges so `settledAmount <= authorizedAmount` and reject `upto` usage when `proPass` is not enabled.
+- On metered `upto` routes (Fiat Agent Wallet rail only; x402 on-chain payments use `exact`), clamp settled charges so `settledAmount <= authorizedAmount` and reject `upto` usage when `proPass` is not enabled.
 - Enforce per-agent spend limits (`perAgentSpendCapMicros` at the edge and `daily_spend_cap_micros` on `agent_wallets`) before issuing receipts or admitting traffic.
 - Never hardcode Stripe keys, signing secrets, or API tokens in source files, `wrangler.jsonc`, or tests outside local test fixtures; read exclusively from `env.*` or `process.env` and document placeholders in `.env.example`.

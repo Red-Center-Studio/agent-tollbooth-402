@@ -35,14 +35,14 @@ Never propose `402` gating on `OPTIONS` preflight, `/health`, `/readyz`, `/webho
 | **Exempt** | `/health`, `/readyz`, `/webhook/*`, `OPTIONS`, auth callbacks | None (Bypass) | Free (`$0`) | `0` |
 | **Lookup / Read** | Cached KV/D1 reads, DNS/WHOIS/metadata lookups, static queries | `exact` | `$0.001` – `$0.005` | `1,000` – `5,000` |
 | **Compute / Mutation** | External API enrichment, PDF/HTML rendering, scraping, webhooks, write actions | `exact` | `$0.01` – `$0.10` | `10,000` – `100,000` |
-| **Metered / LLM Stream** | Token generation, large payload transforms, variable-KB exports | `upto` *(Pro Pass)* | Ceiling `$0.05` – `$0.50` | `50,000` – `500,000` |
+| **Metered / LLM Stream** | Token generation, large payload transforms, variable-KB exports | `exact` *(price the typical call)* | `$0.05` – `$0.50` | `50,000` – `500,000` |
 
 ## Step 3: Present Tier Comparison
 
 | Tier | Pricing | Fee on your payments | Capabilities Unlocked |
 | :--- | :--- | :--- | :--- |
 | **Free (DIY)** | `$0` | `0%` | The connector, plugin and skills, edge middleware, `/test-agent`, hosted settlement on Base Sepolia testnet, and Base mainnet through your own facilitator. |
-| **Tollbooth Pro Pass** | `$39` one-time, one project | `0%` | Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), earnings history and `upto` dynamic metering. Payments still go straight to your wallet. |
+| **Tollbooth Pro Pass** | `$39` one-time, one project | `0%` | Hosted Base mainnet settlement through tollbooth.redcenterstudio.com (no Coinbase developer account, keys or facilitator server of your own), up to 10,000 hosted settlements a month and earnings history. Payments still go straight to your wallet. |
 | **Agency Pass** | `$79` one-time | `0%` | The same as Pro for multiple projects and client sites. |
 | **Done-For-You Integration** | From `$499` | Custom | End-to-end custom MCP + HTTP 402 Tollbooth wrapping by Red Center Studio (`https://redcenterstudio.com`). |
 
@@ -54,6 +54,6 @@ Always conclude with a scannable status table using the standardized badges (`[P
 | :--- | :--- | :--- | :--- | :--- |
 | `GET /health` | `[PASS]` | Exempt (Bypass) | `$0` | Keep unauthenticated and ungated |
 | `GET /api/lookup` | `[ACTION NEEDED]` | `[402 CHALLENGE]` (`exact`) | `$0.01` | Run `/install-tollbooth` (`priceUsd: 0.01`) |
-| `POST /api/generate` | `[ACTION NEEDED]` | `[402 CHALLENGE]` (`upto` Pro) | `$0.05` ceiling | Run `/install-tollbooth` with `proPass: true` |
+| `POST /api/generate` | `[ACTION NEEDED]` | `[402 CHALLENGE]` | `$0.05` | Run `/install-tollbooth` |
 
 Offer to run `/install-tollbooth` on the selected `[ACTION NEEDED]` routes.
