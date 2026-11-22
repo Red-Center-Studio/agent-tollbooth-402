@@ -1692,10 +1692,10 @@ function buildDemo402Challenge(request: Request): X402PaymentRequired {
     code: 'MISSING_PAYMENT',
     error: 'PAYMENT-SIGNATURE or rcs_receipt bearer header is required',
     fix_hint:
-      'Attach an x402 V2 Base64 PAYMENT-SIGNATURE header or an Authorization: Bearer rcs_receipt_... token for $0.01 USD (10000 microdollars).',
+      'Sign a USDC payment for $0.01 USD on Base and retry with an x402 V2 Base64 PAYMENT-SIGNATURE header.',
     priceUsd: '0.01',
     priceMicros: 10_000,
-    acceptedRails: ['x402-v2', 'rcs-fiat-wallet'],
+    acceptedRails: ['x402-v2'],
     paymentUrl: 'https://tollbooth.redcenterstudio.com/pay',
     resource: {
       url: 'https://tollbooth.redcenterstudio.com/api/v1/lookup',
