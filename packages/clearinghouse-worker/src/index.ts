@@ -1974,20 +1974,35 @@ function renderPortalStructuredDataJsonLd(): string {
     '@context': 'https://schema.org',
     '@graph': [
       {
+        '@type': 'Organization',
+        '@id': 'https://redcenterstudio.com/#organization',
+        name: 'Red Center Studio',
+        url: 'https://redcenterstudio.com/',
+        email: 'hello@redcenterstudio.com',
+        sameAs: ['https://github.com/Red-Center-Studio'],
+      },
+      {
+        '@type': 'WebSite',
+        '@id': 'https://tollbooth.redcenterstudio.com/#website',
+        name: 'Agent Tollbooth 402',
+        url: 'https://tollbooth.redcenterstudio.com/',
+        publisher: { '@id': 'https://redcenterstudio.com/#organization' },
+      },
+      {
         '@type': 'SoftwareApplication',
+        '@id': 'https://tollbooth.redcenterstudio.com/#app',
         name: 'Agent Tollbooth 402',
         applicationCategory: 'DeveloperApplication',
         operatingSystem: 'Cloudflare Workers, Node.js, Any HTTP Edge',
-        url: 'https://tollbooth.redcenterstudio.com/pay',
+        url: 'https://tollbooth.redcenterstudio.com/',
+        softwareVersion: '1.2.2',
+        isAccessibleForFree: true,
+        publisher: { '@id': 'https://redcenterstudio.com/#organization' },
         sameAs: [
           'https://github.com/Red-Center-Studio/agent-tollbooth-402',
           'https://glama.ai/mcp/servers/Red-Center-Studio/agent-tollbooth-402',
         ],
-        author: {
-          '@type': 'Organization',
-          name: 'Red Center Studio',
-          url: 'https://redcenterstudio.com',
-        },
+        author: { '@id': 'https://redcenterstudio.com/#organization' },
         offers: [
           {
             '@type': 'Offer',
@@ -2065,7 +2080,7 @@ function renderLlmsTxt(): string {
     '> HTTP 402 (x402 V2 Base USDC paid straight to your own wallet, 0% fee) billing middleware, remote MCP server, and Claude Code / Antigravity plugin by Red Center Studio.',
     '',
     '## Live Endpoints',
-    '- Portal & Pricing: https://tollbooth.redcenterstudio.com/pay',
+    '- Portal & Pricing: https://tollbooth.redcenterstudio.com/',
     '- Streamable HTTP MCP Endpoint: https://tollbooth.redcenterstudio.com/mcp',
     '- MCP Discovery Card: https://tollbooth.redcenterstudio.com/.well-known/mcp.json',
     '- Interactive HTTP 402 Demo (HTML & JSON): https://tollbooth.redcenterstudio.com/demo/402',
@@ -2127,7 +2142,7 @@ function renderWellKnownMcpManifest(): Record<string, unknown> {
     version: '1.2.2',
     description:
       'HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and earnings history for APIs & MCP. Agents pay your own wallet in USDC.',
-    websiteUrl: 'https://tollbooth.redcenterstudio.com/pay',
+    websiteUrl: 'https://tollbooth.redcenterstudio.com/',
     endpoint: 'https://tollbooth.redcenterstudio.com/mcp',
     transport: 'streamable-http',
     documentation: 'https://tollbooth.redcenterstudio.com/llms.txt',
@@ -2140,16 +2155,21 @@ function renderRobotsTxt(): string {
   return 'User-agent: *\nAllow: /\nSitemap: https://tollbooth.redcenterstudio.com/sitemap.xml\n';
 }
 
+/** Date the public pages last changed; bump with each release that changes /, /pay or llms.txt. */
+const SITE_LASTMOD = '2026-11-26';
+
 function renderSitemapXml(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://tollbooth.redcenterstudio.com/pay</loc>
+    <loc>https://tollbooth.redcenterstudio.com/</loc>
+    <lastmod>${SITE_LASTMOD}</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://tollbooth.redcenterstudio.com/llms.txt</loc>
+    <lastmod>${SITE_LASTMOD}</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -2252,15 +2272,15 @@ function renderClearinghousePortalHtml(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
-  <title>Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
+  <title>Charge AI Agents per Call with x402 | Agent Tollbooth 402</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3CclipPath id='s'%3E%3Ccircle cx='11' cy='11' r='11'/%3E%3C/clipPath%3E%3Cg clip-path='url(%23s)'%3E%3Crect width='22' height='12.5' fill='%23d9622b'/%3E%3Crect y='14.5' width='22' height='2.5' fill='%23d9622b'/%3E%3Crect y='19' width='22' height='2.5' fill='%23a63d14'/%3E%3C/g%3E%3C/svg%3E" />
   <meta name="description" content="Charge AI agents per call with HTTP 402 and x402. USDC goes straight to your own wallet at 0% fee. Free DIY setup, go live on Base with a $39 Pro Pass." />
-  <link rel="canonical" href="https://tollbooth.redcenterstudio.com/pay" />
+  <link rel="canonical" href="https://tollbooth.redcenterstudio.com/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Red Center Studio" />
   <meta property="og:title" content="Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402" />
   <meta property="og:description" content="Charge AI agents per call with HTTP 402 and x402. USDC goes straight to your own wallet at 0% fee. Free DIY setup, go live on Base with a $39 Pro Pass." />
-  <meta property="og:url" content="https://tollbooth.redcenterstudio.com/pay" />
+  <meta property="og:url" content="https://tollbooth.redcenterstudio.com/" />
   <meta property="og:image" content="https://raw.githubusercontent.com/Red-Center-Studio/agent-tollbooth-402/main/assets/screenshots/clearinghouse-portal.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402" />
@@ -3672,8 +3692,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
   return jsonRpcErr(rpc.id, -32601, `Method not found: ${rpc.method}`);
 }
 
-export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+async function handleRequest(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
 
@@ -3876,6 +3895,16 @@ export default {
         500,
       );
     }
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Crawlers, link checkers and uptime monitors often send HEAD: answer it as GET, without a body.
+    if (request.method === 'HEAD') {
+      const res = await handleRequest(new Request(request.url, { method: 'GET', headers: request.headers }), env, ctx);
+      return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
+    }
+    return handleRequest(request, env, ctx);
   },
 
   /** Hourly: drop spent nonces whose authorization or receipt has expired (an expired one is refused anyway). */

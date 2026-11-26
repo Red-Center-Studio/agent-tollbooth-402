@@ -1155,7 +1155,22 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(sitemapRes.status).toBe(200);
     expect(sitemapRes.headers.get('Content-Type')).toContain('application/xml');
     const sitemapText = await sitemapRes.text();
-    expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/pay');
+    // Google indexes the root as the canonical home; /pay serves the same page and points to it.
+    expect(sitemapText).toContain('<loc>https://tollbooth.redcenterstudio.com/</loc>');
+    expect(sitemapText).not.toContain('<loc>https://tollbooth.redcenterstudio.com/pay</loc>');
+    expect(sitemapText).toMatch(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/);
+    expect(portalHtml).toContain('<link rel="canonical" href="https://tollbooth.redcenterstudio.com/" />');
+    const title = /<title>([^<]*)<\/title>/.exec(portalHtml)?.[1] ?? '';
+    expect(title.length).toBeLessThanOrEqual(60);
+    expect(portalHtml).toContain('"@type":"Organization"');
+    expect(portalHtml).toContain('"@type":"WebSite"');
+
+    // Crawlers, link checkers and uptime monitors send HEAD: same status and type as GET, no body.
+    for (const p of ['/', '/pay', '/sitemap.xml', '/robots.txt', '/llms.txt']) {
+      const head = await worker.fetch(new Request(`https://tollbooth.redcenterstudio.com${p}`, { method: 'HEAD' }), env, mockCtx);
+      expect(head.status, `HEAD ${p}`).toBe(200);
+      expect(await head.text()).toBe('');
+    }
     // The demo answers 402 on purpose, so search engines cannot index it: it stays out of the sitemap.
     expect(sitemapText).not.toContain('https://tollbooth.redcenterstudio.com/demo/402');
     expect(sitemapText).toContain('https://tollbooth.redcenterstudio.com/llms.txt');
