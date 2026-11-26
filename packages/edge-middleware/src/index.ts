@@ -299,6 +299,12 @@ const ed25519KeyCache = new Map<string, Promise<CryptoKey>>();
  * Convert a USD dollar value (e.g. `0.005` or `"$0.005"`) into integer microdollars (`1 USD = 1_000_000`).
  */
 export function usdToMicros(usd: number | string): number {
+  if (typeof usd !== 'number' && typeof usd !== 'string') {
+    throw new RangeError(`Invalid USD amount type: ${typeof usd}`);
+  }
+  if (typeof usd === 'number' && !Number.isFinite(usd)) {
+    throw new RangeError(`Invalid non-finite USD amount: ${usd}`);
+  }
   const cleaned =
     typeof usd === 'string' ? usd.trim().replace(/^\$/, '') : String(usd);
   if (!/^\d+(\.\d+)?$/.test(cleaned)) {
@@ -475,6 +481,7 @@ function getHmacKey(secret: string, usage: 'sign' | 'verify'): Promise<CryptoKey
       false,
       [usage],
     );
+    pending.catch(() => hmacKeyCache.delete(cacheKey));
     hmacKeyCache.set(cacheKey, pending);
   }
   return pending;
@@ -506,6 +513,7 @@ function getEd25519VerifyKey(keyOrEncoded: CryptoKey | string): Promise<CryptoKe
       false,
       ['verify'],
     );
+    pending.catch(() => ed25519KeyCache.delete(keyOrEncoded));
     ed25519KeyCache.set(keyOrEncoded, pending);
   }
   return pending;
@@ -629,7 +637,21 @@ function matchesAudience(claimAud: string, expectedAudience: string): boolean {
   }
   if (claimAud.endsWith('*')) {
     const prefix = claimAud.slice(0, -1);
-    return expectedBase.startsWith(prefix) || expectedAudience.startsWith(prefix);
+    try {
+      const claimUrl = new URL(prefix);
+      const reqUrl = new URL(expectedAudience);
+      if (claimUrl.origin !== reqUrl.origin) {
+        return false;
+      }
+      const reqPathAndQuery = `${reqUrl.pathname}${reqUrl.search}`;
+      const claimPathAndQuery = `${claimUrl.pathname}${claimUrl.search}`;
+      if (claimPathAndQuery === '/') {
+        return true;
+      }
+      return reqUrl.pathname.startsWith(claimUrl.pathname) || reqPathAndQuery.startsWith(claimPathAndQuery);
+    } catch {
+      return expectedBase.startsWith(prefix) || expectedAudience.startsWith(prefix);
+    }
   }
   try {
     const claimUrl = new URL(claimAud);
@@ -708,6 +730,9 @@ export async function verifyFiatReceipt(
   }
 
   if (
+    !claims ||
+    typeof claims !== 'object' ||
+    Array.isArray(claims) ||
     claims.v !== 1 ||
     typeof claims.jti !== 'string' ||
     claims.jti.length === 0 ||
@@ -829,6 +854,25 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function safeHref(rawUrl: string | undefined, fallback = DEFAULT_PAYMENT_URL): string {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return fallback;
+  }
+  const trimmed = rawUrl.trim();
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    // Reject non-http(s) URLs such as javascript:, data:, vbscript:
+  }
+  return fallback;
+}
+
 /**
  * Self-contained Red Center Studio HTML 402 Checkout Card rendered when
  * a browser sends `Accept: text/html` to a gated endpoint.
@@ -838,6 +882,7 @@ export function renderDefault402HtmlPage(
   request: Request,
 ): string {
   const url = new URL(request.url);
+  const safePaymentUrl = safeHref(challenge.paymentUrl);
   const accept = challenge.accepts[0];
   const amountAtomic = accept?.amount ?? String(challenge.priceMicros);
   const payTo = accept?.payTo ?? DEFAULT_PAY_TO;
@@ -857,6 +902,7 @@ export function renderDefault402HtmlPage(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
   <title>402 Payment Required: Agent Tollbooth 402 | Red Center Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3CclipPath id='s'%3E%3Ccircle cx='11' cy='11' r='11'/%3E%3C/clipPath%3E%3Cg clip-path='url(%23s)'%3E%3Crect width='22' height='12.5' fill='%23d9622b'/%3E%3Crect y='14.5' width='22' height='2.5' fill='%23d9622b'/%3E%3Crect y='19' width='22' height='2.5' fill='%23a63d14'/%3E%3C/g%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" />
@@ -881,10 +927,12 @@ export function renderDefault402HtmlPage(
       --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
     }
     * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; }
+    html { -webkit-text-size-adjust: 100%; max-width: 100%; overflow-x: hidden; }
     body {
       margin: 0;
       min-height: 100vh;
+      max-width: 100%;
+      overflow-x: hidden;
       display: flex;
       flex-direction: column;
       background: var(--sand);
@@ -933,6 +981,9 @@ export function renderDefault402HtmlPage(
     }
     .stage {
       flex: 1;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -949,6 +1000,8 @@ export function renderDefault402HtmlPage(
     .card {
       width: 100%;
       max-width: 650px;
+      min-width: 0;
+      overflow-wrap: anywhere;
       background: var(--card);
       border: 1px solid var(--line);
       border-top: 3px solid var(--ochre);
@@ -962,18 +1015,22 @@ export function renderDefault402HtmlPage(
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      max-width: 100%;
       padding: 4px 9px;
       border: 1px solid;
       border-radius: 2px;
       font: 500 11.5px/1.2 var(--mono);
       letter-spacing: 0.1em;
       text-transform: uppercase;
+      overflow-wrap: anywhere;
     }
     .badge-ochre { background: #fbeee4; color: var(--ochre-deep); border-color: var(--ochre-deep); }
     .badge-gum { background: #eaf2ec; color: #2f5a41; border-color: var(--gum); }
     .dot {
       width: 6px;
       height: 6px;
+      flex: none;
+      flex-shrink: 0;
       border-radius: 50%;
       background: var(--gum);
       display: inline-block;
@@ -985,7 +1042,7 @@ export function renderDefault402HtmlPage(
       letter-spacing: -0.02em;
       color: var(--ink);
     }
-    .desc { margin: 0 0 12px; color: var(--muted); font-size: 15px; line-height: 1.45; }
+    .desc { margin: 0 0 12px; color: var(--muted); font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
     .facts {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -995,7 +1052,9 @@ export function renderDefault402HtmlPage(
       background: var(--sand);
       border: 1px solid var(--line);
       border-radius: 2px;
+      min-width: 0;
     }
+    .facts > div { min-width: 0; }
     .fact-wide { grid-column: 1 / -1; padding-top: 8px; border-top: 1px solid var(--line); }
     .label {
       font: 500 11.5px/1.4 var(--mono);
@@ -1034,8 +1093,10 @@ export function renderDefault402HtmlPage(
       gap: 10px;
       margin-bottom: 11px;
     }
-    .rails.one { grid-template-columns: 1fr; }
+    .rails.one { grid-template-columns: minmax(0, 1fr); }
     .rail-box {
+      min-width: 0;
+      overflow-wrap: anywhere;
       padding: 11px 13px;
       background: #fff;
       border: 1px solid var(--line);
@@ -1069,6 +1130,7 @@ export function renderDefault402HtmlPage(
     }
     .code-bar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
@@ -1080,6 +1142,8 @@ export function renderDefault402HtmlPage(
       display: inline-flex;
       align-items: center;
       gap: 8px;
+      min-width: 0;
+      overflow-wrap: anywhere;
       font: 500 11px/1 var(--mono);
       letter-spacing: 0.12em;
       text-transform: uppercase;
@@ -1151,11 +1215,11 @@ export function renderDefault402HtmlPage(
     }
     @media (prefers-reduced-motion: reduce) { .card, .dot, .sim-banner { animation: none; } }
     @media (max-width: 640px) {
-      .stage { padding: 18px 14px 32px; align-items: flex-start; }
+      .stage { padding: 18px 16px 32px; align-items: flex-start; }
       .card { padding: 18px 16px; }
-      .facts, .rails { grid-template-columns: 1fr; gap: 10px; }
+      .facts, .rails { grid-template-columns: minmax(0, 1fr); gap: 10px; }
       .actions { flex-direction: column; align-items: stretch; }
-      .btn { width: 100%; min-height: 48px; }
+      .btn { width: 100%; max-width: 100%; min-height: 48px; white-space: normal; overflow-wrap: anywhere; }
     }
   </style>
 </head>
@@ -1163,7 +1227,7 @@ export function renderDefault402HtmlPage(
   <header class="site-head">
     <div class="head-wrap">
       <a class="brand" href="https://redcenterstudio.com/" rel="noopener noreferrer">Red Center Studio</a>
-      <a class="head-link" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">Agent Tollbooth 402</a>
+      <a class="head-link" href="${escapeHtml(safePaymentUrl)}" rel="noopener noreferrer">Agent Tollbooth 402</a>
     </div>
     <span class="strata" aria-hidden="true"></span>
   </header>
@@ -1203,12 +1267,12 @@ export function renderDefault402HtmlPage(
       <div class="code-shell">
         <div class="code-bar">
           <span class="code-title"><span class="term-dots"><i></i><i></i><i></i></span>HTTP 402 Retry Snippet &middot; x402 V2${hasFiat ? ' &amp; Bearer Receipt' : ''}</span>
-          <button class="copy-btn" type="button" onclick="var b=this;navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('curl-cmd').textContent).then(function(){b.textContent='Copied';b.style.borderColor='#4f7f63';b.style.color='#2f5a41';setTimeout(function(){b.textContent='Copy';b.style.borderColor='';b.style.color='';},1500);})">Copy</button>
+          <button class="copy-btn" type="button" onclick="var b=this;navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('curl-cmd').textContent).then(function(){b.textContent='Copied';b.style.borderColor='#4f7f63';b.style.color='#2f5a41';setTimeout(function(){b.textContent='Copy';b.style.borderColor='';b.style.color='';},1500);}).catch(function(){b.textContent='Copy failed';setTimeout(function(){b.textContent='Copy';},1500);})">Copy</button>
         </div>
         <pre class="code" id="curl-cmd">${escapeHtml(safeCurl)}</pre>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="${escapeHtml(challenge.paymentUrl)}" rel="noopener noreferrer">How AI agents pay</a>
+        <a class="btn btn-primary" href="${escapeHtml(safePaymentUrl)}" rel="noopener noreferrer">How AI agents pay</a>
         <a class="btn btn-ghost" href="https://redcenterstudio.com/services/ai-tollbooth-setup/" rel="noopener noreferrer">See AI Tollbooth Setup</a>
       </div>
       <p class="meta-foot">Powered by Agent Tollbooth 402 &middot; <a href="https://redcenterstudio.com/" rel="noopener noreferrer">Red Center Studio</a></p>
@@ -1218,16 +1282,51 @@ export function renderDefault402HtmlPage(
 </html>`;
 }
 
-function matchPathPattern(pattern: string, pathname: string): boolean {
-  if (pattern === '*' || pattern === '/*') {
+function normalizeMatchPath(rawPath: string): string {
+  let decoded = rawPath;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    // preserve raw path on malformed percent encoding
+  }
+  const trailingSlash = decoded.length > 1 && decoded.endsWith('/');
+  const resolved: string[] = [];
+  for (const seg of decoded.split('/')) {
+    if (!seg || seg === '.') {
+      continue;
+    }
+    if (seg === '..') {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(seg);
+  }
+  return `/${resolved.join('/')}${trailingSlash && resolved.length > 0 ? '/' : ''}`;
+}
+
+/**
+ * Downstream routers disagree on decoding (most leave %2F encoded), so the raw and the
+ * decoded/normalized path can route differently. Fail closed both ways:
+ * a route is gated if EITHER form matches, a path is exempt only if BOTH forms match.
+ */
+function matchesGatedPattern(pattern: string, pathname: string): boolean {
+  return matchPathForm(pattern, pathname) || matchPathForm(normalizeMatchPath(pattern), normalizeMatchPath(pathname));
+}
+
+function matchesExemptPattern(pattern: string, pathname: string): boolean {
+  return matchPathForm(pattern, pathname) && matchPathForm(normalizeMatchPath(pattern), normalizeMatchPath(pathname));
+}
+
+function matchPathForm(normPattern: string, normPath: string): boolean {
+  if (normPattern === '*' || normPattern === '/*') {
     return true;
   }
-  if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, -1);
-    return pathname === pattern.slice(0, -2) || pathname.startsWith(prefix);
+  if (normPattern.endsWith('/*')) {
+    const prefix = normPattern.slice(0, -1);
+    return normPath === normPattern.slice(0, -2) || normPath.startsWith(prefix);
   }
-  const patternParts = pattern.split('/').filter(Boolean);
-  const pathParts = pathname.split('/').filter(Boolean);
+  const patternParts = normPattern.split('/').filter(Boolean);
+  const pathParts = normPath.split('/').filter(Boolean);
   if (patternParts.length !== pathParts.length) {
     return false;
   }
@@ -1507,6 +1606,7 @@ function parseBigIntAmount(value: string): bigint | null {
 interface TollboothEvaluatorResult {
   isPreflight?: boolean;
   earlyResponse?: Response;
+  rollback?: () => Promise<void>;
   finalizeResponse?: (downstreamResponse: Response) => Promise<Response>;
 }
 
@@ -1523,12 +1623,12 @@ async function evaluateTollboothRequest(
   const config = normalizeConfig(rawConfig);
   const url = new URL(request.url);
   const exemptPaths = config.exemptPaths ?? [...DEFAULT_EXEMPT_PATHS];
-  if (exemptPaths.some((pat) => matchPathPattern(pat, url.pathname))) {
+  if (exemptPaths.some((pat) => matchesExemptPattern(pat, url.pathname))) {
     return {};
   }
 
   const route = config.normalizedRoutes.find(
-    (r) => matchPathPattern(r.pattern, url.pathname) && isMethodMatch(r.method, request.method),
+    (r) => matchesGatedPattern(r.pattern, url.pathname) && isMethodMatch(r.method, request.method),
   );
   if (!route) {
     return {};
@@ -1613,15 +1713,20 @@ async function evaluateTollboothRequest(
       spendRecorded = true;
     }
 
+    const rollback = async () => {
+      if (nonceStore.release) {
+        await nonceStore.release(claims.jti);
+      }
+      if (spendRecorded && spendTracker.rollback) {
+        await spendTracker.rollback(claims.sub, requiredMicros);
+      }
+    };
+
     return {
+      rollback,
       finalizeResponse: async (downstreamResponse: Response) => {
         if (downstreamResponse.status >= 500) {
-          if (nonceStore.release) {
-            await nonceStore.release(claims.jti);
-          }
-          if (spendRecorded && spendTracker.rollback) {
-            await spendTracker.rollback(claims.sub, requiredMicros);
-          }
+          await rollback();
           return downstreamResponse;
         }
         return cloneWithPaymentResponse(
@@ -1655,7 +1760,12 @@ async function evaluateTollboothRequest(
 
   let parsedSig: X402PaymentSignature;
   try {
-    parsedSig = decodePaymentHeader<X402PaymentSignature>(paymentSigHeader);
+    const rawDecoded: unknown = decodePaymentHeader<unknown>(paymentSigHeader);
+    if (!rawDecoded || typeof rawDecoded !== 'object' || Array.isArray(rawDecoded)) {
+      const challenge = buildPaymentRequiredChallenge(request, config, route, 'malformed_payment_signature');
+      return { earlyResponse: create402Response(request, config, challenge) };
+    }
+    parsedSig = rawDecoded as X402PaymentSignature;
   } catch {
     const challenge = buildPaymentRequiredChallenge(request, config, route, 'malformed_payment_signature');
     return { earlyResponse: create402Response(request, config, challenge) };
@@ -1669,7 +1779,17 @@ async function evaluateTollboothRequest(
   const requiredAtomicStr = usdMicrosToUsdcAtomic(requiredMicros);
   const requiredAtomic = BigInt(requiredAtomicStr);
 
-  if (parsedSig.x402Version !== 2 || !parsedSig.payload?.authorization || !parsedSig.payload?.signature) {
+  if (
+    parsedSig.x402Version !== 2 ||
+    !parsedSig.payload ||
+    typeof parsedSig.payload !== 'object' ||
+    Array.isArray(parsedSig.payload) ||
+    typeof parsedSig.payload.signature !== 'string' ||
+    !parsedSig.payload.signature ||
+    !parsedSig.payload.authorization ||
+    typeof parsedSig.payload.authorization !== 'object' ||
+    Array.isArray(parsedSig.payload.authorization)
+  ) {
     const challenge = buildPaymentRequiredChallenge(request, config, route, 'invalid_x402_payload');
     return { earlyResponse: create402Response(request, config, challenge) };
   }
@@ -1719,7 +1839,10 @@ async function evaluateTollboothRequest(
     return { earlyResponse: create402Response(request, config, challenge) };
   }
 
-  const authorizedAtomic = parseBigIntAmount(auth.value);
+  const authorizedAtomic =
+    typeof auth.value === 'string' || typeof auth.value === 'number'
+      ? parseBigIntAmount(String(auth.value))
+      : null;
   if (authorizedAtomic === null || authorizedAtomic < requiredAtomic) {
     const challenge = buildPaymentRequiredChallenge(request, config, route, 'insufficient_payment_amount');
     return { earlyResponse: create402Response(request, config, challenge) };
@@ -1804,15 +1927,20 @@ async function evaluateTollboothRequest(
     spendRecorded = true;
   }
 
+  const rollback = async () => {
+    if (nonceStore.release) {
+      await nonceStore.release(auth.nonce);
+    }
+    if (spendRecorded && spendTracker.rollback) {
+      await spendTracker.rollback(auth.from, requiredMicros);
+    }
+  };
+
   return {
+    rollback,
     finalizeResponse: async (downstreamResponse: Response) => {
       if (downstreamResponse.status >= 500) {
-        if (nonceStore.release) {
-          await nonceStore.release(auth.nonce);
-        }
-        if (spendRecorded && spendTracker.rollback) {
-          await spendTracker.rollback(auth.from, requiredMicros);
-        }
+        await rollback();
         return downstreamResponse;
       }
 
@@ -1956,7 +2084,13 @@ export function withTollbooth<Env = unknown>(
         return evaluation.earlyResponse;
       }
 
-      const downstream = await invokeHandler(request, env, ctx);
+      let downstream: Response;
+      try {
+        downstream = await invokeHandler(request, env, ctx);
+      } catch (err) {
+        await evaluation.rollback?.();
+        throw err;
+      }
       if (evaluation.isPreflight) {
         if (downstream.status === 404 || downstream.status === 405) {
           const preflight = new Response(null, { status: 204, headers: downstream.headers });
@@ -1992,12 +2126,21 @@ export function honoTollbooth(config: TollboothConfig): HonoLikeMiddleware {
       return evaluation.earlyResponse;
     }
 
-    await next();
-    if (c.res && evaluation.isPreflight) {
+    try {
+      await next();
+    } catch (err) {
+      await evaluation.rollback?.();
+      throw err;
+    }
+    if (!c.res) {
+      await evaluation.rollback?.();
+      return c.res;
+    }
+    if (evaluation.isPreflight) {
       c.res = attachCorsExposeHeaders(c.res, true);
-    } else if (c.res && evaluation.finalizeResponse) {
+    } else if (evaluation.finalizeResponse) {
       c.res = await evaluation.finalizeResponse(c.res);
-    } else if (c.res) {
+    } else {
       c.res = attachCorsExposeHeaders(c.res, false);
     }
     return c.res;
