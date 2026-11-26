@@ -2059,6 +2059,22 @@ function renderPortalStructuredDataJsonLd(): string {
           },
           {
             '@type': 'Question',
+            name: 'Can I charge per tool on an MCP server?',
+            acceptedAnswer: {
+              '@type': 'Answer',
+              text: 'Yes. Set mcpToolPricesUsd on your /mcp route with a USD price for each tool. The handshake and tools/list stay free, so agents can connect and see your tools before paying, and a tool priced at 0 stays free.',
+            },
+          },
+          {
+            '@type': 'Question',
+            name: 'Are agents charged when my API fails?',
+            acceptedAnswer: {
+              '@type': 'Answer',
+              text: 'No. Payment settles only after your handler succeeds. If it answers with a server error or throws, the payment is released and the agent can retry.',
+            },
+          },
+          {
+            '@type': 'Question',
             name: 'Can I test locally without a Stripe key or crypto wallet?',
             acceptedAnswer: {
               '@type': 'Answer',
@@ -2108,6 +2124,10 @@ function renderLlmsTxt(): string {
     '  return Response.json({ ok: true, path: new URL(request.url).pathname });',
     '});',
     '```',
+    '',
+    '## Per-Tool MCP Pricing',
+    '- Price an MCP server per tool: add mcpToolPricesUsd to the /mcp route, e.g. { search: 0.001, analyze: 0.02, ping: 0 }. initialize, tools/list and notifications stay free; unlisted tools pay the route price; batches pay the sum.',
+    '- Agents are not charged when your handler fails: payment settles only after a non-5xx response, otherwise the authorization is released for a retry.',
     '',
     '## Remote MCP Tools',
     toolLines,
@@ -3143,6 +3163,14 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
             <details>
               <summary>Is testing free?</summary>
               <p>Yes. Hosted settlement on Base Sepolia testnet is free. Base mainnet is free too if you settle through your own facilitator.</p>
+            </details>
+            <details>
+              <summary>Can I charge per tool on an MCP server?</summary>
+              <p>Yes. Set <code>mcpToolPricesUsd</code> on your <code>/mcp</code> route with a USD price for each tool. The handshake and <code>tools/list</code> stay free, so agents can connect and see your tools before paying, and a tool priced at 0 stays free.</p>
+            </details>
+            <details>
+              <summary>Are agents charged when my API fails?</summary>
+              <p>No. Payment settles only after your handler succeeds. If it answers with a server error or throws, the payment is released and the agent can retry.</p>
             </details>
             <details>
               <summary>Can I test locally without a crypto wallet?</summary>

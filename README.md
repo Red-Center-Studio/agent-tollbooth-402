@@ -40,6 +40,8 @@ export default withTollbooth({ priceUsd: 0.01, mode: "x402", payTo: "0xYourBaseU
 - **Local test without wallets or keys:** change `mode: "x402"` to `mode: "sandbox"` and call `createSandboxReceipt()` or `createSandboxX402Header()`.
 - **Hono middleware:** `app.use("/api/*", honoTollbooth({ priceUsd: 0.01, mode: "x402", payTo: "0xYourBaseUSDCWallet", network: "eip155:84532" }))`.
 - **Cloudflare D1 replay protection:** pass `nonceStore: new D1NonceStore(env.DB)` inside `withTollbooth((env) => ({ ... }), handler)`.
+- **Per-tool MCP pricing:** `routes: [{ pattern: "/mcp", method: "POST", priceUsd: 0.05, mcpToolPricesUsd: { search: 0.001, analyze: 0.02, ping: 0 } }]`. The handshake and `tools/list` stay free, so clients connect and discover tools before paying.
+- **No charge on failure:** payment settles only after your handler succeeds; a 5xx or thrown error releases the authorization for a retry.
 
 ---
 

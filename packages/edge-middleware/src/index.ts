@@ -234,6 +234,14 @@ export interface TollboothRouteConfig {
   asset?: string;
   payTo?: string;
   maxTimeoutSeconds?: number;
+  /**
+   * Price an MCP (JSON-RPC over HTTP) endpoint per tool. Keys are tool names, values USD prices
+   * (e.g. 0.01 or "$0.01"); 0 makes a tool free. Only `tools/call` is charged: `initialize`,
+   * `tools/list`, notifications and other methods pass through free, so clients can connect and
+   * discover tools. Tools not listed pay the route's own price. A body that cannot be read as
+   * JSON-RPC pays the route's own price (fail closed). Batches pay the sum of their tool calls.
+   */
+  mcpToolPricesUsd?: Record<string, number | string>;
   meterUsage?: (
     request: Request,
     response: Response,
@@ -1383,6 +1391,7 @@ function extractFiatReceiptToken(request: Request): string | null {
 
 interface NormalizedRoute extends TollboothRouteConfig {
   resolvedPriceMicros: number;
+  mcpToolPriceMicros?: Map<string, number>;
 }
 
 interface NormalizedConfig extends TollboothConfig {
@@ -1459,6 +1468,9 @@ function normalizeConfig(config: TollboothConfig): NormalizedConfig {
     resolvedPriceMicros:
       r.priceMicros ??
       (r.priceUsd !== undefined ? usdToMicros(r.priceUsd) : defaultMicros),
+    mcpToolPriceMicros: r.mcpToolPricesUsd
+      ? new Map(Object.entries(r.mcpToolPricesUsd).map(([tool, usd]) => [tool, usdToMicros(usd)]))
+      : undefined,
   }));
 
   return {
@@ -1603,6 +1615,64 @@ function parseBigIntAmount(value: string): bigint | null {
   return BigInt(value);
 }
 
+const MCP_BODY_LIMIT_BYTES = 1_048_576;
+
+/**
+ * For a route with `mcpToolPricesUsd`, price the request by the MCP tool(s) it calls.
+ * Returns null when nothing in the request is charged (handshake, discovery, free tools),
+ * otherwise the route with the per-request price. Anything unreadable pays the route price.
+ */
+async function resolveMcpToolRoute(route: NormalizedRoute, request: Request): Promise<NormalizedRoute | null> {
+  const prices = route.mcpToolPriceMicros;
+  if (!prices) {
+    return route;
+  }
+  const declared = Number(request.headers.get('Content-Length') ?? '0');
+  if (!request.body || (Number.isFinite(declared) && declared > MCP_BODY_LIMIT_BYTES)) {
+    return route;
+  }
+  let messages: unknown[];
+  try {
+    const text = await request.clone().text();
+    if (text.length > MCP_BODY_LIMIT_BYTES) {
+      return route;
+    }
+    const parsed: unknown = JSON.parse(text);
+    messages = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return route;
+  }
+  if (messages.length === 0) {
+    return route;
+  }
+  let total = 0;
+  const tools: string[] = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+      return route;
+    }
+    const { method, params } = msg as { method?: unknown; params?: unknown };
+    if (method !== 'tools/call') {
+      continue;
+    }
+    const name =
+      params && typeof params === 'object' && !Array.isArray(params) ? (params as { name?: unknown }).name : undefined;
+    if (typeof name !== 'string' || name.length === 0) {
+      return route;
+    }
+    total += prices.get(name) ?? route.resolvedPriceMicros;
+    tools.push(name);
+  }
+  if (total <= 0) {
+    return null;
+  }
+  return {
+    ...route,
+    resolvedPriceMicros: total,
+    description: route.description ?? `MCP tool: ${tools.join(', ')}`,
+  };
+}
+
 interface TollboothEvaluatorResult {
   isPreflight?: boolean;
   earlyResponse?: Response;
@@ -1627,9 +1697,13 @@ async function evaluateTollboothRequest(
     return {};
   }
 
-  const route = config.normalizedRoutes.find(
+  const matchedRoute = config.normalizedRoutes.find(
     (r) => matchesGatedPattern(r.pattern, url.pathname) && isMethodMatch(r.method, request.method),
   );
+  if (!matchedRoute) {
+    return {};
+  }
+  const route = await resolveMcpToolRoute(matchedRoute, request);
   if (!route) {
     return {};
   }
