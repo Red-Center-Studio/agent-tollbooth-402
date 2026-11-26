@@ -302,21 +302,34 @@ export async function rotateKey(db: D1Database, token: string, scope: KeyScope):
     return bad('admin_key_not_rotatable_here', 'Rotate CLEARINGHOUSE_API_KEY with wrangler secret put.');
   }
   const now = Math.floor(Date.now() / 1000);
-  const revokeRes = await db
-    .prepare('UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? AND revoked_at IS NULL')
-    .bind(now, await sha256Hex(token))
-    .run();
-  if ((revokeRes.meta?.changes ?? 0) !== 1) {
+  const oldHash = await sha256Hex(token);
+  const isWallet = scope.kind === 'wallet';
+  const fresh = newKey(isWallet ? 'wallet' : 'developer');
+  // One transaction: the new key is stored only while the old one is still active, then the old one
+  // is revoked. A failure stores nothing and revokes nothing, so the owner is never locked out, and of
+  // two concurrent rotations only one issues a key.
+  const [insertRes] = await db.batch([
+    db
+      .prepare(
+        'INSERT INTO api_keys (key_hash, key_prefix, wallet_id, developer_id, created_at, revoked_at) SELECT ?, ?, ?, ?, ?, NULL WHERE EXISTS (SELECT 1 FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL)',
+      )
+      .bind(
+        await sha256Hex(fresh),
+        fresh.slice(0, 12),
+        isWallet ? scope.walletId : null,
+        isWallet ? null : scope.developerId,
+        now,
+        oldHash,
+      ),
+    db.prepare('UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? AND revoked_at IS NULL').bind(now, oldHash),
+  ]);
+  if ((insertRes?.meta?.changes ?? 0) !== 1) {
     return bad('key_already_rotated', 'This key has already been rotated or revoked. Use the newer key issued at rotation.', 409);
   }
-  if (scope.kind === 'wallet') {
-    const walletKey = newKey('wallet');
-    await storeKey(db, walletKey, { walletId: scope.walletId }, now);
-    return { status: 200, payload: { walletId: scope.walletId, walletKey, revokedPrevious: true } };
+  if (isWallet) {
+    return { status: 200, payload: { walletId: scope.walletId, walletKey: fresh, revokedPrevious: true } };
   }
-  const developerKey = newKey('developer');
-  await storeKey(db, developerKey, { developerId: scope.developerId }, now);
-  return { status: 200, payload: { developerId: scope.developerId, developerKey, revokedPrevious: true } };
+  return { status: 200, payload: { developerId: scope.developerId, developerKey: fresh, revokedPrevious: true } };
 }
 
 export async function ledgerHistory(

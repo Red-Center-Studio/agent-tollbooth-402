@@ -974,6 +974,13 @@ describe('Red-Team Round 6: Vector 5 — Silent Failure & Persistence Audit', ()
     expect((raw.prepare('SELECT COUNT(*) AS n FROM api_keys').get() as { n: number }).n).toBe(1);
     expect((raw.prepare('SELECT COUNT(*) AS n FROM ledger_entries').get() as { n: number }).n).toBe(0);
     expect((raw.prepare('SELECT COUNT(*) AS n FROM used_nonces').get() as { n: number }).n).toBe(0);
+
+    // A key rotation that fails mid-flight must leave the old key working (no lockout).
+    const { walletKey } = (await (await worker.fetch(post('/wallet/register', {}), baseEnv, ctx)).json()) as { walletKey: string };
+    const rotFail = await worker.fetch(post('/keys/rotate', {}, { Authorization: `Bearer ${walletKey}` }), failEnv, ctx);
+    expect(rotFail.status).toBe(500);
+    const rotOk = await worker.fetch(post('/keys/rotate', {}, { Authorization: `Bearer ${walletKey}` }), baseEnv, ctx);
+    expect(rotOk.status).toBe(200);
   });
 
   it('a transient D1 failure never swallows a paid Stripe event: the retry credits once, the next retry is a replay', async () => {
