@@ -2447,7 +2447,7 @@ function renderClearinghousePortalHtml(
       white-space: nowrap;
     }
     .proof-play {
-      min-height: 28px;
+      min-height: 44px;
       padding: 4px 10px;
       background: rgba(243, 233, 222, 0.08);
       color: var(--on-dark);
@@ -2471,6 +2471,7 @@ function renderClearinghousePortalHtml(
       background: transparent;
       border: 1px solid transparent;
       border-radius: 2px;
+      min-height: 44px;
       padding: 7px 6px;
       color: var(--on-dark-muted);
       font: 500 11.5px/1.25 var(--mono);
@@ -2622,7 +2623,7 @@ function renderClearinghousePortalHtml(
       background: var(--ironstone);
       color: var(--on-dark);
       border-radius: 2px;
-      padding: 46px 14px 14px;
+      padding: 60px 14px 14px;
       font: 500 12.5px/1.55 var(--mono);
       overflow-x: auto;
       white-space: pre-wrap;
@@ -2632,7 +2633,7 @@ function renderClearinghousePortalHtml(
       position: absolute;
       top: 8px;
       right: 8px;
-      min-height: 30px;
+      min-height: 44px;
       padding: 4px 13px;
       font-size: 12.5px;
       background: var(--card);
