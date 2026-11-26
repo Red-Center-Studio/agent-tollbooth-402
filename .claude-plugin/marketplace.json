@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "agent-tollbooth-402",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Agent Tollbooth 402 by Red Center Studio: charge AI agents per call with HTTP 402 and x402, paid straight to your own wallet.",
   "owner": {
     "name": "Red Center Studio",
@@ -11,7 +11,7 @@
     {
       "name": "agent-tollbooth-402",
       "description": "Charge AI agents per call with HTTP 402 and x402: USDC straight to your own wallet, 0% fee. Scan routes, install edge middleware for Cloudflare Workers, Hono, Next.js and MCP servers, and test free on Base Sepolia.",
-      "version": "1.2.2",
+      "version": "1.3.0",
       "author": {
         "name": "Red Center Studio",
         "url": "https://redcenterstudio.com"
