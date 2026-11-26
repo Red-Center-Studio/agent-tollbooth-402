@@ -3225,7 +3225,10 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         const body = form.dataset.kind === 'topup' ? { walletId: id, amountUsd: 10 } : { developerId: id, passTier: form.elements.tier.value };
         const [ok, j] = await post('/wallet/topup', body);
         if (ok && j.checkoutUrl) { location.href = j.checkoutUrl; return; }
-        out.textContent = j.fix_hint || 'Checkout did not open. Please try again.';
+        // Append, never replace: a wallet or developer key shown once above must survive a failed checkout.
+        const msg = j.fix_hint || 'Checkout did not open. Please try again.';
+        out.textContent = keyShown ? out.textContent + NL + msg : msg;
+        out.scrollIntoView({ block: 'nearest' });
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;

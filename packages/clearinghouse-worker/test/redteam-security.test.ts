@@ -800,6 +800,9 @@ describe('Red-Team Round 4: Vector 4 — State Desync & Mid-Flight Interruption'
     expect(html).toContain('let keyShown = false;');
     expect(html).toContain('keyShown ? out.textContent + NL + msg : msg');
     expect(html).toContain('keyShown = true;');
+    // Both the register path and the checkout-failure path append instead of replacing.
+    expect(html.split('keyShown ? out.textContent + NL + msg : msg').length - 1).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain("out.textContent = j.fix_hint ||");
   });
 });
 
