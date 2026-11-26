@@ -19,6 +19,7 @@ import MCP_TOOLS from '../mcp-tools.json';
 import { verifyEip3009 } from './evm.js';
 import {
   bearerToken,
+  isUniqueConstraintError,
   ledgerHistory,
   receiptJwks,
   receiptSigningKey,
@@ -332,6 +333,24 @@ function resolveClearinghouseGuidance(reason: string): { code: string; fix_hint:
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function readJsonObject(
+  request: Request,
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false }> {
+  try {
+    const parsed: unknown = await request.json();
+    if (!isPlainObject(parsed)) {
+      return { ok: false };
+    }
+    return { ok: true, data: parsed };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   // Every authenticated call uses a bearer key, never cookies, so any origin may call (browser MCP inspectors, dashboards).
@@ -532,13 +551,28 @@ async function verifyX402Payload(
   invalidReason: string | null;
   developer?: DeveloperRow | null;
 }> {
-  if (!body || body.x402Version !== 2 || !body.paymentPayload || !body.paymentRequirements) {
+  if (
+    !isPlainObject(body) ||
+    body.x402Version !== 2 ||
+    !isPlainObject(body.paymentPayload) ||
+    !isPlainObject(body.paymentRequirements)
+  ) {
     return { isValid: false, invalidReason: 'invalid_x402_request' };
   }
 
   const { paymentPayload, paymentRequirements } = body;
   if (paymentPayload.x402Version !== 2) {
     return { isValid: false, invalidReason: 'unsupported_x402_version' };
+  }
+
+  if (
+    typeof paymentRequirements.scheme !== 'string' ||
+    typeof paymentRequirements.network !== 'string' ||
+    typeof paymentRequirements.asset !== 'string' ||
+    typeof paymentRequirements.payTo !== 'string' ||
+    (typeof paymentRequirements.amount !== 'string' && typeof paymentRequirements.amount !== 'number')
+  ) {
+    return { isValid: false, invalidReason: 'invalid_x402_request' };
   }
 
   const reqScheme = paymentRequirements.scheme;
@@ -552,13 +586,20 @@ async function verifyX402Payload(
     return { isValid: false, invalidReason: 'network_mismatch' };
   }
 
-  const auth = paymentPayload.payload?.authorization;
+  if (!isPlainObject(paymentPayload.payload) || typeof paymentPayload.payload.signature !== 'string') {
+    return { isValid: false, invalidReason: 'malformed_authorization' };
+  }
+  const auth = paymentPayload.payload.authorization;
   if (
-    !auth ||
+    !isPlainObject(auth) ||
     typeof auth.from !== 'string' ||
     typeof auth.to !== 'string' ||
     typeof auth.nonce !== 'string' ||
     auth.nonce.length === 0 ||
+    auth.nonce.length > 256 ||
+    (typeof auth.value !== 'string' && typeof auth.value !== 'number') ||
+    (typeof auth.validAfter !== 'string' && typeof auth.validAfter !== 'number') ||
+    (typeof auth.validBefore !== 'string' && typeof auth.validBefore !== 'number') ||
     !/^\d+$/.test(String(auth.value)) ||
     !/^\d+$/.test(String(paymentRequirements.amount)) ||
     !/^\d+$/.test(String(auth.validAfter)) ||
@@ -574,6 +615,9 @@ async function verifyX402Payload(
   const now = Math.floor(Date.now() / 1000);
   const validAfter = Number(auth.validAfter);
   const validBefore = Number(auth.validBefore);
+  if (!Number.isSafeInteger(validAfter) || !Number.isSafeInteger(validBefore)) {
+    return { isValid: false, invalidReason: 'malformed_authorization' };
+  }
   const clockSkew = DEFAULT_CLOCK_SKEW_SECONDS;
   if (now < validAfter - clockSkew || now > validBefore + clockSkew) {
     return { isValid: false, invalidReason: 'authorization_expired' };
@@ -589,8 +633,13 @@ async function verifyX402Payload(
     .bind(paymentRequirements.payTo)
     .first<DeveloperRow>();
 
-  if (reqScheme === 'upto' && developer && developer.tier !== 'pro' && developer.tier !== 'agency') {
-    return { isValid: false, invalidReason: 'pro_pass_required_for_upto', developer };
+  if (reqScheme === 'upto') {
+    if (!isSandboxEnv(env)) {
+      return { isValid: false, invalidReason: 'upto_not_supported_onchain', developer };
+    }
+    if (!developer || (developer.tier !== 'pro' && developer.tier !== 'agency')) {
+      return { isValid: false, invalidReason: 'pro_pass_required_for_upto', developer };
+    }
   }
 
   const used = await env.DB.prepare('SELECT nonce FROM used_nonces WHERE nonce = ? LIMIT 1')
@@ -609,16 +658,15 @@ async function verifyX402Payload(
 }
 
 async function handleVerify(request: Request, env: Env): Promise<Response> {
-  let body: FacilitatorRequestBody;
-  try {
-    body = (await request.json()) as FacilitatorRequestBody;
-  } catch {
+  const parsed = await readJsonObject(request);
+  if (!parsed.ok) {
     const g = resolveClearinghouseGuidance('invalid_json');
     return jsonWithCors(
       { isValid: false, invalidReason: 'invalid_json', ...g },
       400,
     );
   }
+  const body = parsed.data as unknown as FacilitatorRequestBody;
 
   const result = await verifyX402Payload(body, env);
   if (result.isValid) {
@@ -637,10 +685,8 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleSettle(request: Request, env: Env): Promise<Response> {
-  let body: FacilitatorRequestBody;
-  try {
-    body = (await request.json()) as FacilitatorRequestBody;
-  } catch {
+  const parsed = await readJsonObject(request);
+  if (!parsed.ok) {
     return jsonWithCors(
       {
         success: false,
@@ -651,20 +697,54 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
       400,
     );
   }
+  const body = parsed.data as unknown as FacilitatorRequestBody;
 
-  const nonce = body.paymentPayload?.payload?.authorization?.nonce ?? '';
-  const idempotencyKey = request.headers.get('Idempotency-Key') ?? `settle_${nonce}`;
+  const authNonce = body?.paymentPayload?.payload?.authorization?.nonce;
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    body.x402Version !== 2 ||
+    !body.paymentPayload ||
+    !body.paymentRequirements ||
+    typeof authNonce !== 'string' ||
+    authNonce.length === 0
+  ) {
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'invalid_x402_request',
+        ...resolveClearinghouseGuidance('invalid_x402_request'),
+      },
+      400,
+    );
+  }
+
+  const rawIdempotencyKey = request.headers.get('Idempotency-Key') ?? `settle_${authNonce}`;
+  const idempotencyKey = `x402:${rawIdempotencyKey}`;
 
   const existing = await env.DB.prepare(
-    'SELECT id, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json FROM ledger_entries WHERE idempotency_key = ? LIMIT 1',
+    "SELECT id, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json FROM ledger_entries WHERE idempotency_key = ? AND rail = 'x402' AND entry_type = 'settlement' LIMIT 1",
   )
     .bind(idempotencyKey)
     .first<ExistingLedgerRow>();
 
   if (existing) {
     const meta = existing.metadata_json
-      ? (JSON.parse(existing.metadata_json) as { network?: string })
+      ? (JSON.parse(existing.metadata_json) as { network?: string; nonce?: string })
       : {};
+    if (meta.nonce && meta.nonce !== authNonce) {
+      return jsonWithCors(
+        {
+          success: false,
+          txHash: null,
+          errorReason: 'idempotency_conflict',
+          ...resolveClearinghouseGuidance('idempotency_conflict'),
+        },
+        409,
+      );
+    }
     return jsonWithCors({
       success: true,
       txHash: existing.tx_reference,
@@ -701,8 +781,8 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
   let settleBig = BigInt(req.amount);
 
   if (req.scheme === 'upto') {
-    const requestedSettle = body.settleAmount ?? req.amount;
-    if (!/^\d+$/.test(requestedSettle)) {
+    const requestedSettle = body.settleAmount ?? String(req.amount);
+    if (typeof requestedSettle !== 'string' || !/^\d+$/.test(requestedSettle)) {
       return jsonWithCors(
         {
           success: false,
@@ -848,24 +928,62 @@ async function handleSettle(request: Request, env: Env): Promise<Response> {
     txHash = await computeSettlementTxHash(`sandbox:${auth.nonce}:${req.network}:${grossMicros}:${now}`);
   }
 
-  await env.DB.prepare(
-    'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  )
-    .bind(
-      `led_${crypto.randomUUID()}`,
-      idempotencyKey,
-      verification.developer?.id ?? null,
-      'x402',
-      'settlement',
-      feeBreakdown.grossMicros,
-      feeBreakdown.feeBps,
-      feeBreakdown.platformFeeMicros,
-      feeBreakdown.developerNetMicros,
-      txHash,
-      JSON.stringify({ network: req.network, payer: auth.from, sandbox }),
-      now,
+  try {
+    await env.DB.prepare(
+      'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run();
+      .bind(
+        `led_${crypto.randomUUID()}`,
+        idempotencyKey,
+        verification.developer?.id ?? null,
+        'x402',
+        'settlement',
+        feeBreakdown.grossMicros,
+        feeBreakdown.feeBps,
+        feeBreakdown.platformFeeMicros,
+        feeBreakdown.developerNetMicros,
+        txHash,
+        JSON.stringify({ network: req.network, payer: auth.from, nonce: auth.nonce, sandbox }),
+        now,
+      )
+      .run();
+  } catch (err) {
+    if (!isUniqueConstraintError(err)) {
+      throw err;
+    }
+    const winner = await env.DB.prepare(
+      "SELECT id, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json FROM ledger_entries WHERE idempotency_key = ? AND rail = 'x402' AND entry_type = 'settlement' LIMIT 1",
+    )
+      .bind(idempotencyKey)
+      .first<ExistingLedgerRow>();
+    const winnerMeta = winner?.metadata_json
+      ? (JSON.parse(winner.metadata_json) as { network?: string; nonce?: string })
+      : {};
+    if (winner && winnerMeta.nonce === auth.nonce) {
+      return jsonWithCors({
+        success: true,
+        txHash: winner.tx_reference,
+        network: winnerMeta.network ?? req.network,
+        settledAmount: String(winner.gross_micros),
+        platformFeeMicros: winner.platform_fee_micros,
+        developerNetMicros: winner.developer_net_micros,
+        idempotentReplay: true,
+        errorReason: null,
+      });
+    }
+    if (!facilitator) {
+      await env.DB.prepare('DELETE FROM used_nonces WHERE nonce = ?').bind(auth.nonce).run();
+    }
+    return jsonWithCors(
+      {
+        success: false,
+        txHash: null,
+        errorReason: 'idempotency_conflict',
+        ...resolveClearinghouseGuidance('idempotency_conflict'),
+      },
+      409,
+    );
+  }
 
   return jsonWithCors({
     success: true,
@@ -885,9 +1003,18 @@ async function issueWalletReceiptInternal(
   env: Env,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   if (
+    !isPlainObject(body) ||
+    typeof body.walletId !== 'string' ||
     !body.walletId ||
+    typeof body.developerId !== 'string' ||
     !body.developerId ||
-    !body.audience ||
+    typeof body.audience !== 'string' ||
+    body.audience.trim().length === 0 ||
+    body.audience.length > 2048 ||
+    /[\r\n\0]/.test(body.audience) ||
+    (body.method !== undefined && (typeof body.method !== 'string' || !/^(\*|[A-Za-z]{1,16})$/.test(body.method))) ||
+    (body.scheme !== undefined && body.scheme !== 'exact' && body.scheme !== 'upto') ||
+    typeof body.amountMicros !== 'number' ||
     !Number.isSafeInteger(body.amountMicros) ||
     body.amountMicros <= 0
   ) {
@@ -899,15 +1026,56 @@ async function issueWalletReceiptInternal(
       },
     };
   }
+  if (
+    body.ttlSeconds !== undefined &&
+    (typeof body.ttlSeconds !== 'number' ||
+      !Number.isSafeInteger(body.ttlSeconds) ||
+      body.ttlSeconds < 10 ||
+      body.ttlSeconds > 300)
+  ) {
+    return {
+      status: 400,
+      payload: {
+        error: 'invalid_ttl_seconds',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'ttlSeconds must be an integer between 10 and 300.',
+      },
+    };
+  }
+  if (body.routeId !== undefined && (typeof body.routeId !== 'string' || body.routeId.trim().length === 0 || body.routeId.length > 128)) {
+    return {
+      status: 400,
+      payload: {
+        error: 'invalid_route_id',
+        code: 'INVALID_REQUEST',
+        fix_hint: 'routeId must belong to the specified developerId in the routes table.',
+      },
+    };
+  }
+
+  const scopedIdemKey = `rcpt:${body.walletId}:${idempotencyKey}`;
 
   const existing = await env.DB.prepare(
-    'SELECT id, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json FROM ledger_entries WHERE idempotency_key = ? LIMIT 1',
+    "SELECT id, developer_id, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json FROM ledger_entries WHERE idempotency_key = ? AND wallet_id = ? AND rail = 'fiat_wallet' AND entry_type = 'charge' LIMIT 1",
   )
-    .bind(idempotencyKey)
-    .first<ExistingLedgerRow>();
+    .bind(scopedIdemKey, body.walletId)
+    .first<ExistingLedgerRow & { developer_id?: string | null }>();
 
   if (existing?.metadata_json) {
-    const cached = JSON.parse(existing.metadata_json) as Record<string, unknown>;
+    const cached = JSON.parse(existing.metadata_json) as { claims?: { aud?: string; amt?: number } } & Record<string, unknown>;
+    if (
+      existing.developer_id !== body.developerId ||
+      cached.claims?.aud !== body.audience ||
+      cached.claims?.amt !== body.amountMicros
+    ) {
+      return {
+        status: 409,
+        payload: {
+          error: 'idempotency_conflict',
+          ...resolveClearinghouseGuidance('idempotency_conflict'),
+        },
+      };
+    }
     return {
       status: 200,
       payload: {
@@ -963,6 +1131,22 @@ async function issueWalletReceiptInternal(
         ...resolveClearinghouseGuidance('pro_pass_required_for_upto'),
       },
     };
+  }
+
+  if (body.routeId !== undefined) {
+    const routeRow = await env.DB.prepare('SELECT id FROM routes WHERE id = ? AND developer_id = ? LIMIT 1')
+      .bind(body.routeId, developer.id)
+      .first<{ id: string }>();
+    if (!routeRow) {
+      return {
+        status: 400,
+        payload: {
+          error: 'invalid_route_id',
+          code: 'INVALID_REQUEST',
+          fix_hint: 'routeId does not exist for this developer.',
+        },
+      };
+    }
   }
 
   const wallet = await env.DB.prepare(
@@ -1090,7 +1274,7 @@ async function issueWalletReceiptInternal(
     )
       .bind(
         `led_${crypto.randomUUID()}`,
-        idempotencyKey,
+        scopedIdemKey,
         wallet.id,
         developer.id,
         body.routeId ?? null,
@@ -1105,8 +1289,8 @@ async function issueWalletReceiptInternal(
         now,
       )
       .run();
-  } catch {
-    // Concurrent duplicate idempotency_key lost the INSERT race: roll back the duplicate debit.
+  } catch (err) {
+    // Roll back the wallet debit if ledger insertion failed (whether race conflict or DB error).
     await env.DB.prepare(
       `UPDATE agent_wallets
        SET balance_micros = balance_micros + ?,
@@ -1117,10 +1301,15 @@ async function issueWalletReceiptInternal(
       .bind(body.amountMicros, body.amountMicros, now, wallet.id)
       .run();
 
+    if (!isUniqueConstraintError(err)) {
+      console.error('issue_receipt_ledger_insert_failed', err);
+      throw err;
+    }
+
     const winner = await env.DB.prepare(
-      'SELECT metadata_json FROM ledger_entries WHERE idempotency_key = ? LIMIT 1',
+      "SELECT metadata_json FROM ledger_entries WHERE idempotency_key = ? AND wallet_id = ? AND rail = 'fiat_wallet' AND entry_type = 'charge' LIMIT 1",
     )
-      .bind(idempotencyKey)
+      .bind(scopedIdemKey, wallet.id)
       .first<{ metadata_json: string | null }>();
     if (winner?.metadata_json) {
       return {
@@ -1201,7 +1390,7 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
     );
   }
 
-  if (!event.id || !event.type) {
+  if (!isPlainObject(event) || typeof event.id !== 'string' || !event.id || typeof event.type !== 'string' || !event.type) {
     return jsonWithCors(
       {
         error: 'invalid_stripe_event',
@@ -1237,7 +1426,9 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
   if (event.type === 'checkout.session.completed' && session.payment_status === 'unpaid') {
     return jsonWithCors({ received: true, pending: true, sessionId: session.id ?? null });
   }
-  const meta: Record<string, string | undefined> = { ...(session.metadata ?? {}) };
+  const meta: Record<string, string | undefined> = isPlainObject(session.metadata)
+    ? ({ ...session.metadata } as Record<string, string | undefined>)
+    : {};
   // Payment Links carry no metadata: recover the account from client_reference_id and the amount paid.
   const clientRef = typeof session.client_reference_id === 'string' ? session.client_reference_id : '';
   if (!meta.kind && !meta.wallet_id && !meta.developer_id && clientRef) {
@@ -1266,11 +1457,11 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
       );
     }
 
-    const devUpdate = await env.DB.prepare('UPDATE developers SET tier = ? WHERE id = ?')
-      .bind(targetTier, meta.developer_id)
-      .run();
+    const existingDev = await env.DB.prepare('SELECT id, tier FROM developers WHERE id = ? LIMIT 1')
+      .bind(meta.developer_id)
+      .first<{ id: string; tier: DeveloperTier }>();
 
-    if ((devUpdate.meta?.changes ?? 0) !== 1) {
+    if (!existingDev) {
       return jsonWithCors(
         {
           error: 'developer_not_found',
@@ -1280,17 +1471,34 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
       );
     }
 
-    await env.DB.prepare(
-      'INSERT OR IGNORE INTO used_nonces (nonce, rail, wallet_or_payer, route_pattern, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    )
-      .bind(eventIdemKey, 'fiat_wallet', meta.developer_id, '/webhook/stripe', now + 86_400, now)
-      .run();
+    // Never downgrade an Agency Pass holder to Pro if an older webhook arrives out of order.
+    const effectiveTier: DeveloperTier =
+      existingDev.tier === 'agency' && targetTier === 'pro' ? 'agency' : targetTier;
+
+    // Claim the event and apply the tier in one atomic batch: a replay fails on the
+    // used_nonces primary key and rolls back; any other failure leaves no claim behind,
+    // so Stripe's retry is processed instead of being mistaken for a replay.
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          'INSERT INTO used_nonces (nonce, rail, wallet_or_payer, route_pattern, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        ).bind(eventIdemKey, 'fiat_wallet', meta.developer_id, '/webhook/stripe', now + 365 * 86_400, now),
+        env.DB.prepare(
+          "UPDATE developers SET tier = CASE WHEN tier = 'agency' AND ? = 'pro' THEN 'agency' ELSE ? END WHERE id = ?",
+        ).bind(targetTier, targetTier, meta.developer_id),
+      ]);
+    } catch (err) {
+      if (isUniqueConstraintError(err)) {
+        return jsonWithCors({ received: true, idempotentReplay: true, eventId: event.id });
+      }
+      throw err;
+    }
 
     return jsonWithCors({
       received: true,
       kind: 'tier_upgrade',
       developerId: meta.developer_id,
-      tier: targetTier,
+      tier: effectiveTier,
     });
   }
 
@@ -1322,13 +1530,11 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
     );
   }
 
-  const walletUpdate = await env.DB.prepare(
-    'UPDATE agent_wallets SET balance_micros = balance_micros + ?, updated_at = ? WHERE id = ?',
-  )
-    .bind(creditMicros, now, walletId)
-    .run();
+  const existingWallet = await env.DB.prepare('SELECT id FROM agent_wallets WHERE id = ? LIMIT 1')
+    .bind(walletId)
+    .first<{ id: string }>();
 
-  if ((walletUpdate.meta?.changes ?? 0) !== 1) {
+  if (!existingWallet) {
     return jsonWithCors(
       {
         error: 'wallet_not_found',
@@ -1338,22 +1544,38 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
     );
   }
 
-  await env.DB.prepare(
+  // The event claim, the credit and the ledger row commit together or not at all.
+  const claimStmt = env.DB.prepare(
+    'INSERT INTO used_nonces (nonce, rail, wallet_or_payer, route_pattern, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind(eventIdemKey, 'fiat_wallet', walletId, '/webhook/stripe', now + 365 * 86_400, now);
+
+  const updateWalletStmt = env.DB.prepare(
+    'UPDATE agent_wallets SET balance_micros = balance_micros + ?, updated_at = ? WHERE id = ?',
+  ).bind(creditMicros, now, walletId);
+
+  const insertLedgerStmt = env.DB.prepare(
     'INSERT INTO ledger_entries (id, idempotency_key, wallet_id, developer_id, route_id, rail, entry_type, gross_micros, fee_bps, platform_fee_micros, developer_net_micros, tx_reference, metadata_json, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, 0, 0, ?, ?, ?, ?)',
-  )
-    .bind(
-      `led_${crypto.randomUUID()}`,
-      eventIdemKey,
-      walletId,
-      'fiat_wallet',
-      'topup',
-      creditMicros,
-      creditMicros,
-      session.id ?? event.id,
-      JSON.stringify({ eventId: event.id, sessionId: session.id ?? null }),
-      now,
-    )
-    .run();
+  ).bind(
+    `led_${crypto.randomUUID()}`,
+    eventIdemKey,
+    walletId,
+    'fiat_wallet',
+    'topup',
+    creditMicros,
+    creditMicros,
+    session.id ?? event.id,
+    JSON.stringify({ eventId: event.id, sessionId: session.id ?? null }),
+    now,
+  );
+
+  try {
+    await env.DB.batch([claimStmt, updateWalletStmt, insertLedgerStmt]);
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      return jsonWithCors({ received: true, idempotentReplay: true, eventId: event.id });
+    }
+    throw err;
+  }
 
   return jsonWithCors({
     received: true,
@@ -1419,6 +1641,16 @@ async function createTopupCheckoutInternal(
   body: TopupCheckoutBody,
   env: Env,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
+  if (
+    !isPlainObject(body) ||
+    (body.walletId !== undefined && typeof body.walletId !== 'string') ||
+    (body.developerId !== undefined && typeof body.developerId !== 'string')
+  ) {
+    return {
+      status: 400,
+      payload: { error: 'invalid_request', code: 'INVALID_REQUEST', fix_hint: 'Provide a JSON object with string account IDs.' },
+    };
+  }
   let amountMicros: number;
   let kind: 'wallet_topup' | 'tier_upgrade';
   let productName: string;
@@ -1453,7 +1685,7 @@ async function createTopupCheckoutInternal(
       };
     }
     try {
-      amountMicros = usdToMicros(body.amountUsd ?? 10);
+      amountMicros = usdToMicros((body.amountUsd ?? 10) as number | string);
     } catch {
       return {
         status: 400,
@@ -1464,13 +1696,13 @@ async function createTopupCheckoutInternal(
         },
       };
     }
-    if (amountMicros < 1_000_000) {
+    if (amountMicros < 1_000_000 || amountMicros > 10_000_000_000) {
       return {
         status: 400,
         payload: {
           error: 'minimum_topup_one_dollar',
           code: 'INVALID_REQUEST',
-          fix_hint: 'Minimum Fiat Agent Wallet top-up is $1.00 USD (1,000,000 microdollars).',
+          fix_hint: 'Fiat Agent Wallet top-up must be between $1.00 and $10,000.00 USD.',
         },
       };
     }
@@ -1492,7 +1724,7 @@ async function createTopupCheckoutInternal(
           : undefined;
 
   // Return only to this site, so a checkout link cannot be used to bounce buyers elsewhere.
-  const sameSite = (u: string | undefined): u is string =>
+  const sameSite = (u: unknown): u is string =>
     typeof u === 'string' && u.startsWith('https://tollbooth.redcenterstudio.com/');
   const successUrl = sameSite(body.successUrl)
     ? body.successUrl
@@ -1588,19 +1820,34 @@ async function createTopupCheckoutInternal(
       form.set('metadata[target_tier]', body.passTier);
     }
 
-    const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: form.toString(),
-    });
-    const stripeJson = (await stripeRes.json()) as {
-      id?: string;
-      url?: string;
-      error?: { message?: string };
-    };
+    let stripeRes: Response;
+    let stripeJson: { id?: string; url?: string; error?: { message?: string } } = {};
+    try {
+      stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: form.toString(),
+      });
+      stripeJson = (await stripeRes.json().catch(() => ({}))) as {
+        id?: string;
+        url?: string;
+        error?: { message?: string };
+      };
+    } catch (err) {
+      console.error('stripe_checkout_network_error', err);
+      return {
+        status: 502,
+        payload: {
+          error: 'stripe_checkout_failed',
+          code: 'FACILITATOR_ERROR',
+          fix_hint:
+            'Checkout could not open right now. Nothing was charged. Please try again in a minute, or email hello@redcenterstudio.com.',
+        },
+      };
+    }
     if (!stripeRes.ok || !stripeJson.url) {
       console.error('stripe_checkout_failed', stripeRes.status, stripeJson.error?.message ?? '');
       return {
@@ -1662,10 +1909,8 @@ async function createTopupCheckoutInternal(
 }
 
 async function handleWalletTopup(request: Request, env: Env): Promise<Response> {
-  let body: TopupCheckoutBody;
-  try {
-    body = (await request.json()) as TopupCheckoutBody;
-  } catch {
+  const parsed = await readJsonObject(request);
+  if (!parsed.ok) {
     return jsonWithCors(
       {
         error: 'invalid_json',
@@ -1674,7 +1919,7 @@ async function handleWalletTopup(request: Request, env: Env): Promise<Response> 
       400,
     );
   }
-  const result = await createTopupCheckoutInternal(body, env);
+  const result = await createTopupCheckoutInternal(parsed.data as unknown as TopupCheckoutBody, env);
   return jsonWithCors(result.payload, result.status);
 }
 
@@ -1991,11 +2236,11 @@ function renderClearinghousePortalHtml(
     : '';
   const topupAction = !topupsOpen(env) ? '' : !showBuy ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Fund Agent Wallet ($10)</a>' : env.STRIPE_PAYMENT_LINK_TOPUP_10
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_TOPUP_10)}" rel="noopener noreferrer">Fund Agent Wallet ($10)</a>`
-    : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Fund Agent Wallet ($10)</button>`;
+    : `<button class="btn btn-primary" type="button" onclick="if(this.disabled)return;var b=this;b.disabled=true;fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amountUsd:10})}).then(function(r){return r.json()}).then(function(d){if(d&&d.checkoutUrl)location.href=d.checkoutUrl;else b.disabled=false;}).catch(function(){b.disabled=false;})">Fund Agent Wallet ($10)</button>`;
 
   const proAction = !showBuy ? closedNote : liveBuy ? '<a class="btn btn-primary" href="#buy">Buy Pro Pass &middot; $39</a>' : env.STRIPE_PAYMENT_LINK_PRO_PASS
     ? `<a class="btn btn-primary" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_PRO_PASS)}" rel="noopener noreferrer">Buy Pro Pass &middot; $39</a>`
-    : `<button class="btn btn-primary" type="button" onclick="fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(r=>r.json()).then(d=>{if(d.checkoutUrl)location.href=d.checkoutUrl})">Buy Pro Pass &middot; $39</button>`;
+    : `<button class="btn btn-primary" type="button" onclick="if(this.disabled)return;var b=this;b.disabled=true;fetch('/wallet/topup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passTier:'pro'})}).then(function(r){return r.json()}).then(function(d){if(d&&d.checkoutUrl)location.href=d.checkoutUrl;else b.disabled=false;}).catch(function(){b.disabled=false;})">Buy Pro Pass &middot; $39</button>`;
 
   const agencyAction = !showBuy ? '' : liveBuy ? '<a class="btn btn-ghost" href="#buy">Agency Pass &middot; $79</a>' : env.STRIPE_PAYMENT_LINK_AGENCY_PASS
     ? `<a class="btn btn-ghost" href="${escapeHtmlAttr(env.STRIPE_PAYMENT_LINK_AGENCY_PASS)}" rel="noopener noreferrer">Agency Pass &middot; $79</a>`
@@ -2008,6 +2253,7 @@ function renderClearinghousePortalHtml(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#24181a" />
   <title>Agent Tollbooth 402: Charge AI Agents with HTTP 402 and x402 | Red Center Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3CclipPath id='s'%3E%3Ccircle cx='11' cy='11' r='11'/%3E%3C/clipPath%3E%3Cg clip-path='url(%23s)'%3E%3Crect width='22' height='12.5' fill='%23d9622b'/%3E%3Crect y='14.5' width='22' height='2.5' fill='%23d9622b'/%3E%3Crect y='19' width='22' height='2.5' fill='%23a63d14'/%3E%3C/g%3E%3C/svg%3E" />
   <meta name="description" content="Charge AI agents per call with HTTP 402 and x402. USDC goes straight to your own wallet at 0% fee. Free DIY setup, go live on Base with a $39 Pro Pass." />
   <link rel="canonical" href="https://tollbooth.redcenterstudio.com/pay" />
   <meta property="og:type" content="website" />
@@ -2046,13 +2292,13 @@ function renderClearinghousePortalHtml(
       --wrap: 1120px;
     }
     * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
-    body { margin: 0; background: var(--sand); color: var(--ink); font: 400 17px/1.6 var(--body); }
-    a { color: var(--ochre-deep); }
-    h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -0.02em; line-height: 1.08; margin: 0; text-wrap: balance; }
-    p { margin: 0; }
-    .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
-    .narrow { max-width: 760px; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; max-width: 100%; overflow-x: hidden; }
+    body { margin: 0; max-width: 100%; overflow-x: hidden; background: var(--sand); color: var(--ink); font: 400 17px/1.6 var(--body); }
+    a { color: var(--ochre-deep); overflow-wrap: anywhere; }
+    h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -0.02em; line-height: 1.08; margin: 0; text-wrap: balance; overflow-wrap: anywhere; }
+    p { margin: 0; overflow-wrap: anywhere; }
+    .wrap { max-width: var(--wrap); min-width: 0; margin: 0 auto; padding: 0 24px; }
+    .narrow { max-width: 760px; min-width: 0; }
     .label { font: 500 12px/1.4 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ochre-deep); }
     .dark .label { color: var(--spinifex); }
     .lede { color: var(--muted); max-width: 62ch; }
@@ -2089,7 +2335,7 @@ function renderClearinghousePortalHtml(
     .btn-primary { background: var(--ochre); color: #1e1412; }
     .btn-primary:hover { background: var(--spinifex); }
     .btn-ghost { background: transparent; color: var(--ink); border-color: var(--ink); }
-    .tb-notice { padding: 14px 0; font-weight: 600; }
+    .tb-notice { padding: 14px 0; font-weight: 600; overflow-wrap: anywhere; max-width: 100%; }
     .tb-ok { background: #e3f0e1; color: #1d3b1a; }
     .tb-info { background: #f3e6cf; color: #4a3210; }
     .tb-form { display: flex; flex-direction: column; gap: 10px; }
@@ -2149,7 +2395,7 @@ function renderClearinghousePortalHtml(
     .facts dd { margin: 4px 0 0; font: 700 16px/1.3 var(--body); color: #fff8f0; }
 
     /* Proof Frame Walkthrough Player */
-    .proof { margin: 28px 0 0; position: relative; isolation: isolate; }
+    .proof { margin: 28px 0 0; position: relative; isolation: isolate; min-width: 0; max-width: 100%; }
     .proof::before {
       content: "";
       position: absolute;
@@ -2191,6 +2437,8 @@ function renderClearinghousePortalHtml(
     .proof-dots i:nth-child(2) { background: var(--spinifex); }
     .proof-dots i:nth-child(3) { background: var(--gum); }
     .proof-title {
+      flex: 1 1 0;
+      min-width: 0;
       font: 500 11.5px/1.2 var(--mono);
       letter-spacing: 0.08em;
       color: var(--on-dark-muted);
@@ -2317,6 +2565,8 @@ function renderClearinghousePortalHtml(
     .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .card {
       min-width: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
       background: var(--card);
       border: 1px solid var(--line);
       border-top: 3px solid var(--ochre);
@@ -2360,8 +2610,8 @@ function renderClearinghousePortalHtml(
     .card-actions .btn { width: 100%; font-size: 14.5px; padding: 10px 14px; }
 
     /* Table */
-    .table-wrap { overflow-x: auto; margin-top: 20px; }
-    .map { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); font-size: 15px; }
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; margin-top: 20px; }
+    .map { width: 100%; min-width: 520px; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); font-size: 15px; }
     .map th, .map td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
     .map th { font: 500 12px/1.4 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ochre-deep); background: #faf4ec; }
 
@@ -2392,6 +2642,9 @@ function renderClearinghousePortalHtml(
     .copy-btn:hover { background: var(--spinifex); color: var(--ink); border-color: var(--spinifex); }
     .demo-panel {
       margin-top: 24px;
+      min-width: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
       background: var(--card);
       border: 1px solid var(--line);
       border-left: 3px solid var(--ochre);
@@ -2438,31 +2691,34 @@ function renderClearinghousePortalHtml(
       .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 900px) {
-      .g3 { grid-template-columns: 1fr; }
-      .foot-grid { grid-template-columns: repeat(2, 1fr); }
+      .g3 { grid-template-columns: minmax(0, 1fr); }
+      .foot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 640px) {
       body { font-size: 16px; overflow-x: hidden; }
       .wrap { padding: 0 16px; }
       section { padding: 48px 0; }
-      .g2, .g3, .g4 { grid-template-columns: 1fr; }
+      .g2, .g3, .g4 { grid-template-columns: minmax(0, 1fr); }
+      .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
       .hero .wrap { padding-top: 34px; padding-bottom: 40px; }
       .proof-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .proof-stage { min-height: 180px; padding: 14px; }
       .site-head { position: sticky; top: 0; z-index: 60; }
-      .site-head .wrap { min-height: 60px; gap: 0 12px; padding-top: 6px; padding-bottom: 6px; }
+      .site-head .wrap { min-height: 60px; gap: 0 10px; padding-top: 6px; padding-bottom: 6px; }
       .site-head .head-cta { display: none; }
+      .brand { font-size: 11.5px; letter-spacing: 0.11em; min-width: 0; }
       .menu-btn {
         display: inline-flex;
         align-items: center;
+        flex: none;
         gap: 8px;
         min-height: 44px;
-        padding: 8px 14px;
+        padding: 8px 12px;
         background: transparent;
         color: var(--on-dark);
         border: 1px solid rgba(243, 233, 222, 0.55);
         border-radius: 2px;
-        font: 600 15px/1 var(--body);
+        font: 600 14.5px/1 var(--body);
         cursor: pointer;
       }
       .menu-btn[aria-expanded="true"] { background: var(--on-dark); color: var(--ironstone); }
@@ -2478,7 +2734,7 @@ function renderClearinghousePortalHtml(
       .site-nav.open a.link { min-height: 48px; display: flex; align-items: center; padding: 0; border-bottom: 1px solid rgba(243, 233, 222, 0.1); }
       .site-nav.open .nav-cta { display: inline-flex; margin-top: 12px; min-height: 48px; }
       .cta-row .btn, .demo-row .btn { width: 100%; min-height: 48px; }
-      .foot-grid { grid-template-columns: 1fr; gap: 22px; }
+      .foot-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; }
       .foot-col a, .site-foot .legal-links a { min-height: 44px; display: inline-flex; align-items: center; }
       .map th, .map td { padding: 10px 12px; }
     }
@@ -2916,11 +3172,18 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
   (() => {
     const out = document.getElementById('tb-out');
     if (!out) return;
+    let keyShown = false;
+    const NL = String.fromCharCode(10, 10);
     const post = async (path, body) => {
-      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      return [r.ok, await r.json().catch(() => ({}))];
+      try {
+        const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        return [r.ok, await r.json().catch(() => ({}))];
+      } catch {
+        return [false, { fix_hint: 'Network error contacting clearinghouse. Please check your connection and retry.' }];
+      }
     };
     document.querySelectorAll('[data-register]').forEach((b) => b.addEventListener('click', async () => {
+      if (b.disabled) return;
       const form = b.closest('form');
       const isWallet = b.dataset.register === 'wallet';
       if (!isWallet && !/^0x[0-9a-fA-F]{40}$/.test(form.elements.payout.value.trim())) {
@@ -2928,21 +3191,47 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
         out.scrollIntoView({ block: 'nearest' });
         return;
       }
-      const body = isWallet ? {} : { email: form.elements.email.value, name: form.elements.owner.value, payoutAddress: form.elements.payout.value.trim() || undefined };
-      const [ok, j] = await post(isWallet ? '/wallet/register' : '/developer/register', body);
-      if (!ok) { out.textContent = j.fix_hint || 'Could not create the account.'; return; }
-      form.elements.account.value = isWallet ? j.walletId : j.developerId;
-      out.textContent = (isWallet ? 'Wallet ' + j.walletId + '. Wallet key (shown once, save it now): ' + j.walletKey
-        : 'Account created: ' + j.developerId + '. Developer key (shown once, save it now): ' + j.developerKey + '. Now choose your pass.');
-      out.scrollIntoView({ block: 'nearest' });
+      b.disabled = true;
+      b.setAttribute('aria-busy', 'true');
+      try {
+        const body = isWallet ? {} : { email: form.elements.email.value, name: form.elements.owner.value, payoutAddress: form.elements.payout.value.trim() || undefined };
+        const [ok, j] = await post(isWallet ? '/wallet/register' : '/developer/register', body);
+        if (!ok) {
+          const msg = j.fix_hint || 'Could not create the account.';
+          out.textContent = keyShown ? out.textContent + NL + msg : msg;
+          return;
+        }
+        form.elements.account.value = isWallet ? j.walletId : j.developerId;
+        const created = (isWallet ? 'Wallet ' + j.walletId + '. Wallet key (shown once, save it now): ' + j.walletKey
+          : 'Account created: ' + j.developerId + '. Developer key (shown once, save it now): ' + j.developerKey + '. Now choose your pass.');
+        out.textContent = keyShown ? out.textContent + NL + created : created;
+        keyShown = true;
+        out.scrollIntoView({ block: 'nearest' });
+      } finally {
+        b.disabled = false;
+        b.removeAttribute('aria-busy');
+      }
     }));
     document.querySelectorAll('.tb-form').forEach((form) => form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const id = form.elements.account.value.trim();
-      const body = form.dataset.kind === 'topup' ? { walletId: id, amountUsd: 10 } : { developerId: id, passTier: form.elements.tier.value };
-      const [ok, j] = await post('/wallet/topup', body);
-      if (ok && j.checkoutUrl) { location.href = j.checkoutUrl; return; }
-      out.textContent = j.fix_hint || 'Checkout did not open. Please try again.';
+      const submitBtn = form.querySelector('[type="submit"]');
+      if (submitBtn && submitBtn.disabled) return;
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.setAttribute('aria-busy', 'true');
+      }
+      try {
+        const id = form.elements.account.value.trim();
+        const body = form.dataset.kind === 'topup' ? { walletId: id, amountUsd: 10 } : { developerId: id, passTier: form.elements.tier.value };
+        const [ok, j] = await post('/wallet/topup', body);
+        if (ok && j.checkoutUrl) { location.href = j.checkoutUrl; return; }
+        out.textContent = j.fix_hint || 'Checkout did not open. Please try again.';
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.removeAttribute('aria-busy');
+        }
+      }
     }));
   })();
     (function () {
@@ -2954,6 +3243,14 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
           menuBtn.setAttribute('aria-expanded', String(open));
           menuBtn.textContent = open ? 'Close' : 'Menu';
           nav.classList.toggle('open', open);
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && nav.classList.contains('open')) {
+            menuBtn.setAttribute('aria-expanded', 'false');
+            menuBtn.textContent = 'Menu';
+            nav.classList.remove('open');
+            menuBtn.focus();
+          }
         });
       }
       var steps = [
@@ -3039,6 +3336,11 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
               btn.style.borderColor = '';
               btn.style.color = '';
             }, 1500);
+          }).catch(function () {
+            btn.textContent = 'Copy failed';
+            setTimeout(function () {
+              btn.textContent = 'Copy';
+            }, 1500);
           });
         });
       });
@@ -3046,19 +3348,30 @@ $ /plugin install agent-tollbooth-402@agent-tollbooth-402
       var out = document.getElementById('demo-output');
       if (demoBtn && out) {
         demoBtn.addEventListener('click', async function () {
+          if (demoBtn.disabled) return;
+          demoBtn.disabled = true;
+          demoBtn.setAttribute('aria-busy', 'true');
           out.className = 'demo-out';
           out.textContent = 'Checking /demo/402 and /health...';
           try {
             var t0 = performance.now();
             var r402 = await fetch('/demo/402', { headers: { Accept: 'application/json' } });
             var hdr = r402.headers.get('PAYMENT-REQUIRED') || '';
-            await fetch('/health');
+            var rHealth = await fetch('/health');
             var ms = Math.round(performance.now() - t0);
-            out.className = 'demo-out ok';
-            out.textContent = '[402 CHALLENGE] HTTP ' + r402.status + ' | PAYMENT-REQUIRED (' + hdr.length + 'b) -> [200 OK] /health in ' + ms + 'ms';
+            if (r402.status === 402 && hdr.length > 0 && rHealth.ok) {
+              out.className = 'demo-out ok';
+              out.textContent = '[402 CHALLENGE] HTTP ' + r402.status + ' | PAYMENT-REQUIRED (' + hdr.length + 'b) -> [' + rHealth.status + ' OK] /health in ' + ms + 'ms';
+            } else {
+              out.className = 'demo-out err';
+              out.textContent = 'Unexpected probe response: /demo/402 HTTP ' + r402.status + ' (header ' + hdr.length + 'b), /health HTTP ' + rHealth.status + ' in ' + ms + 'ms';
+            }
           } catch (e) {
             out.className = 'demo-out err';
             out.textContent = 'Check failed: ' + (e && e.message ? e.message : 'network error');
+          } finally {
+            demoBtn.disabled = false;
+            demoBtn.removeAttribute('aria-busy');
           }
         });
       }
@@ -3074,10 +3387,8 @@ async function handleIssueReceipt(request: Request, env: Env): Promise<Response>
     return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 401);
   }
 
-  let body: IssueReceiptBody;
-  try {
-    body = (await request.json()) as IssueReceiptBody;
-  } catch {
+  const parsed = await readJsonObject(request);
+  if (!parsed.ok) {
     return jsonWithCors(
       {
         error: 'invalid_json',
@@ -3086,9 +3397,10 @@ async function handleIssueReceipt(request: Request, env: Env): Promise<Response>
       400,
     );
   }
+  const body = parsed.data as unknown as IssueReceiptBody;
 
   // A wallet key may only spend from its own wallet.
-  if (!scopeAllows(scope, { walletId: body?.walletId })) {
+  if (!scopeAllows(scope, { walletId: typeof body.walletId === 'string' ? body.walletId : undefined })) {
     return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 403);
   }
 
@@ -3138,13 +3450,20 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
 
   let rpc: JsonRpcRequest;
   try {
-    rpc = (await request.json()) as JsonRpcRequest;
+    const rawRpc: unknown = await request.json();
+    if (!isPlainObject(rawRpc)) {
+      return jsonRpcErr(null, -32600, 'Invalid Request', 400);
+    }
+    rpc = rawRpc as unknown as JsonRpcRequest;
   } catch {
     return jsonRpcErr(null, -32700, 'Parse error', 400);
   }
 
   if (rpc.jsonrpc !== '2.0' || typeof rpc.method !== 'string') {
     return jsonRpcErr(rpc.id, -32600, 'Invalid Request', 400);
+  }
+  if (rpc.params !== undefined && !isPlainObject(rpc.params)) {
+    return jsonRpcErr(rpc.id, -32602, 'Invalid params', 400);
   }
 
   if (rpc.method === 'notifications/initialized') {
@@ -3191,12 +3510,17 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
   if (rpc.method === 'tools/call') {
     const params = rpc.params ?? {};
     const toolName = typeof params.name === 'string' ? params.name : '';
+    if (params.arguments !== undefined && !isPlainObject(params.arguments)) {
+      return jsonRpcErr(rpc.id, -32602, 'Tool arguments must be a JSON object');
+    }
     const args = (params.arguments ?? {}) as Record<string, unknown>;
 
     if (toolName === 'tollbooth_pricing_quote') {
-      const priceMicros = Number(args.priceMicros);
-      const callsPerMonth = Number(args.callsPerMonth);
+      const priceMicros = args.priceMicros;
+      const callsPerMonth = args.callsPerMonth;
       if (
+        typeof priceMicros !== 'number' ||
+        typeof callsPerMonth !== 'number' ||
         !Number.isSafeInteger(priceMicros) ||
         priceMicros <= 0 ||
         !Number.isSafeInteger(callsPerMonth) ||
@@ -3205,6 +3529,9 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
         return jsonRpcErr(rpc.id, -32602, 'priceMicros and callsPerMonth must be positive safe integers');
       }
       const monthlyGross = priceMicros * callsPerMonth;
+      if (!Number.isSafeInteger(monthlyGross)) {
+        return jsonRpcErr(rpc.id, -32602, 'monthly gross exceeds safe integer bounds');
+      }
       const quote = {
         monthlyGrossMicros: monthlyGross,
         x402: calculateClearinghouseFee(monthlyGross, 'free', 'x402'),
@@ -3419,6 +3746,10 @@ export default {
         });
       }
 
+      if (request.method === 'GET' && url.pathname === '/favicon.ico') {
+        return withCors(new Response(null, { status: 204, headers: { 'Cache-Control': 'public, max-age=86400' } }));
+      }
+
       if (request.method === 'GET' && url.pathname === '/robots.txt') {
         return withCors(
           new Response(renderRobotsTxt(), {
@@ -3444,19 +3775,19 @@ export default {
       }
 
       if (url.pathname === '/mcp') {
-        return handleMcp(request, env);
+        return await handleMcp(request, env);
       }
 
       if (request.method === 'POST' && url.pathname === '/verify') {
-        return handleVerify(request, env);
+        return await handleVerify(request, env);
       }
 
       if (request.method === 'POST' && url.pathname === '/settle') {
-        return handleSettle(request, env);
+        return await handleSettle(request, env);
       }
 
       if (request.method === 'POST' && url.pathname === '/wallet/issue-receipt') {
-        return handleIssueReceipt(request, env);
+        return await handleIssueReceipt(request, env);
       }
 
       if (request.method === 'GET' && url.pathname === '/.well-known/tollbooth-jwks.json') {
@@ -3466,14 +3797,14 @@ export default {
       }
 
       if (request.method === 'POST' && (url.pathname === '/wallet/register' || url.pathname === '/developer/register')) {
-        let body: Record<string, unknown> = {};
-        try {
-          body = (await request.json()) as Record<string, unknown>;
-        } catch {
+        const parsed = await readJsonObject(request);
+        if (!parsed.ok) {
           return jsonWithCors({ error: 'invalid_json', ...resolveClearinghouseGuidance('invalid_json') }, 400);
         }
         const out =
-          url.pathname === '/wallet/register' ? await registerWallet(env.DB, body) : await registerDeveloper(env.DB, body);
+          url.pathname === '/wallet/register'
+            ? await registerWallet(env.DB, parsed.data)
+            : await registerDeveloper(env.DB, parsed.data);
         return jsonWithCors(out.payload, out.status);
       }
 
@@ -3493,13 +3824,11 @@ export default {
         if (!token || !scope) {
           return jsonWithCors({ error: 'unauthorized', ...resolveClearinghouseGuidance('unauthorized') }, 401);
         }
-        let body: { payoutAddress?: unknown };
-        try {
-          body = (await request.json()) as { payoutAddress?: unknown };
-        } catch {
+        const parsed = await readJsonObject(request);
+        if (!parsed.ok) {
           return jsonWithCors({ error: 'invalid_json', ...resolveClearinghouseGuidance('invalid_json') }, 400);
         }
-        const out = await setPayoutAddress(env.DB, scope, body);
+        const out = await setPayoutAddress(env.DB, scope, parsed.data as { payoutAddress?: unknown });
         return jsonWithCors(out.payload, out.status);
       }
 
@@ -3516,11 +3845,11 @@ export default {
       }
 
       if (request.method === 'POST' && url.pathname === '/wallet/topup') {
-        return handleWalletTopup(request, env);
+        return await handleWalletTopup(request, env);
       }
 
       if (request.method === 'POST' && url.pathname === '/webhook/stripe') {
-        return handleStripeWebhook(request, env);
+        return await handleStripeWebhook(request, env);
       }
 
       return jsonWithCors(
@@ -3532,7 +3861,8 @@ export default {
         },
         404,
       );
-    } catch {
+    } catch (err) {
+      console.error('clearinghouse_unhandled_error', err);
       return jsonWithCors(
         {
           error: 'internal_error',

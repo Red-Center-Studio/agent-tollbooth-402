@@ -32,18 +32,31 @@ export function newKey(kind: 'wallet' | 'developer'): string {
   return `${kind === 'wallet' ? 'rcs_wk_' : 'rcs_dk_'}${b64url(crypto.getRandomValues(new Uint8Array(32)))}`;
 }
 
+export function isUniqueConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /unique constraint failed|constraint_unique/i.test(msg);
+}
+
+async function prepareStoreKeyStmt(
+  db: D1Database,
+  key: string,
+  owner: { walletId?: string; developerId?: string },
+  now: number,
+): Promise<D1PreparedStatement> {
+  return db
+    .prepare(
+      'INSERT INTO api_keys (key_hash, key_prefix, wallet_id, developer_id, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)',
+    )
+    .bind(await sha256Hex(key), key.slice(0, 12), owner.walletId ?? null, owner.developerId ?? null, now);
+}
+
 export async function storeKey(
   db: D1Database,
   key: string,
   owner: { walletId?: string; developerId?: string },
   now: number,
 ): Promise<void> {
-  await db
-    .prepare(
-      'INSERT INTO api_keys (key_hash, key_prefix, wallet_id, developer_id, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)',
-    )
-    .bind(await sha256Hex(key), key.slice(0, 12), owner.walletId ?? null, owner.developerId ?? null, now)
-    .run();
+  await (await prepareStoreKeyStmt(db, key, owner, now)).run();
 }
 
 export function bearerToken(request: Request): string | null {
@@ -87,6 +100,8 @@ export function scopeAllows(scope: KeyScope | null, target: { walletId?: string;
 
 const EMAIL_RE = /^[^\s@<>"']{1,64}@[^\s@<>"']{1,190}\.[A-Za-z]{2,}$/;
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+// Reject ASCII control chars (except benign space) and Unicode bidi overrides (e.g. U+202E RLO spoofing).
+const UNSAFE_TEXT_RE = /[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/;
 
 export const DEFAULT_DAILY_CAP_MICROS = 25_000_000;
 export const MAX_DAILY_CAP_MICROS = 500_000_000;
@@ -101,14 +116,32 @@ export async function registerWallet(
   db: D1Database,
   body: { label?: unknown; email?: unknown; dailySpendCapUsd?: unknown },
 ): Promise<Outcome> {
-  const label = typeof body.label === 'string' ? body.label.trim().slice(0, 80) : '';
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-  if (email && !EMAIL_RE.test(email)) {
+  if (body.label !== undefined && typeof body.label !== 'string') {
+    return bad('invalid_label', 'label must be a string up to 80 characters.');
+  }
+  if (body.email !== undefined && typeof body.email !== 'string') {
+    return bad('invalid_email', 'Give a valid email address, or leave it out.');
+  }
+  const rawLabel = typeof body.label === 'string' ? body.label.trim() : '';
+  if (rawLabel.length > 80 || (typeof body.label === 'string' && UNSAFE_TEXT_RE.test(body.label))) {
+    return bad('invalid_label', 'label must be printable text up to 80 characters.');
+  }
+  const label = rawLabel;
+  const rawEmail = typeof body.email === 'string' ? body.email.trim() : '';
+  const email = rawEmail.toLowerCase();
+  if (email && (email.length > 254 || UNSAFE_TEXT_RE.test(rawEmail) || !EMAIL_RE.test(email))) {
     return bad('invalid_email', 'Give a valid email address, or leave it out.');
   }
   let capMicros = DEFAULT_DAILY_CAP_MICROS;
   if (body.dailySpendCapUsd !== undefined) {
-    const cap = Number(body.dailySpendCapUsd);
+    const rawCap = body.dailySpendCapUsd;
+    if (
+      typeof rawCap !== 'number' &&
+      !(typeof rawCap === 'string' && /^\d+(\.\d+)?$/.test(rawCap.trim()))
+    ) {
+      return bad('invalid_daily_spend_cap', 'dailySpendCapUsd must be a number between 1 and 500.');
+    }
+    const cap = Number(rawCap);
     if (!Number.isFinite(cap) || cap < 1 || cap * 1_000_000 > MAX_DAILY_CAP_MICROS) {
       return bad('invalid_daily_spend_cap', 'dailySpendCapUsd must be between 1 and 500.');
     }
@@ -117,13 +150,13 @@ export async function registerWallet(
   const now = Math.floor(Date.now() / 1000);
   const walletId = newId('wallet');
   const walletKey = newKey('wallet');
-  await db
+  const insertWalletStmt = db
     .prepare(
       'INSERT INTO agent_wallets (id, owner_label, balance_micros, daily_spend_cap_micros, daily_spent_micros, spend_window_day, stripe_customer_id, status, created_at, updated_at, owner_email) VALUES (?, ?, 0, ?, 0, ?, NULL, ?, ?, ?, ?)',
     )
-    .bind(walletId, label || 'Agent wallet', capMicros, new Date(now * 1000).toISOString().slice(0, 10), 'active', now, now, email || null)
-    .run();
-  await storeKey(db, walletKey, { walletId }, now);
+    .bind(walletId, label || 'Agent wallet', capMicros, new Date(now * 1000).toISOString().slice(0, 10), 'active', now, now, email || null);
+  const insertKeyStmt = await prepareStoreKeyStmt(db, walletKey, { walletId }, now);
+  await db.batch([insertWalletStmt, insertKeyStmt]);
   return {
     status: 201,
     payload: {
@@ -140,18 +173,29 @@ export async function registerDeveloper(
   db: D1Database,
   body: { email?: unknown; name?: unknown; payoutAddress?: unknown },
 ): Promise<Outcome> {
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
+  if (typeof body.email !== 'string' || typeof body.name !== 'string') {
+    if (typeof body.email !== 'string') {
+      return bad('invalid_email', 'Give a valid email address.');
+    }
+    return bad('missing_name', 'Give a string name for the developer account (1-80 characters).');
+  }
+  if (body.payoutAddress !== undefined && typeof body.payoutAddress !== 'string') {
+    return bad('invalid_payout_address', 'payoutAddress must be 0x followed by 40 hex characters.');
+  }
+  const rawEmail = body.email.trim();
+  const email = rawEmail.toLowerCase();
+  const rawName = body.name.trim();
   const payout = typeof body.payoutAddress === 'string' ? body.payoutAddress.trim() : '';
-  if (!EMAIL_RE.test(email)) {
+  if (email.length > 254 || UNSAFE_TEXT_RE.test(rawEmail) || !EMAIL_RE.test(email)) {
     return bad('invalid_email', 'Give a valid email address.');
   }
-  if (!name) {
+  if (!rawName) {
     return bad('missing_name', 'Give a name for the developer account (a person or a business).');
   }
-  if (email.length > 254) {
-    return bad('invalid_email', 'Give a valid email address.');
+  if (rawName.length > 80 || UNSAFE_TEXT_RE.test(body.name)) {
+    return bad('invalid_name', 'Developer name must be printable text up to 80 characters.');
   }
+  const name = rawName;
   if (payout && !ADDRESS_RE.test(payout)) {
     return bad('invalid_payout_address', 'payoutAddress must be 0x followed by 40 hex characters.');
   }
@@ -169,13 +213,38 @@ export async function registerDeveloper(
   const now = Math.floor(Date.now() / 1000);
   const developerId = newId('dev');
   const developerKey = newKey('developer');
-  await db
+  const insertDevStmt = db
     .prepare(
       "INSERT INTO developers (id, email, name, tier, stripe_account_id, payout_address, created_at) VALUES (?, ?, ?, 'hybrid', NULL, ?, ?)",
     )
-    .bind(developerId, email, name, payout || null, now)
-    .run();
-  await storeKey(db, developerKey, { developerId }, now);
+    .bind(developerId, email, name, payout || null, now);
+  const insertKeyStmt = await prepareStoreKeyStmt(db, developerKey, { developerId }, now);
+  try {
+    await db.batch([insertDevStmt, insertKeyStmt]);
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+      if (msg.includes('payout_address')) {
+        return payoutInUse();
+      }
+      if (msg.includes('email')) {
+        return bad(
+          'email_already_registered',
+          'This email already has a developer account. Use its developer key, or email hello@redcenterstudio.com to recover it.',
+          409,
+        );
+      }
+      if (payout && (await payoutTaken(db, payout))) {
+        return payoutInUse();
+      }
+      return bad(
+        'email_already_registered',
+        'This email already has a developer account. Use its developer key, or email hello@redcenterstudio.com to recover it.',
+        409,
+      );
+    }
+    throw err;
+  }
   return {
     status: 201,
     payload: {
@@ -216,7 +285,14 @@ export async function setPayoutAddress(db: D1Database, scope: KeyScope, body: { 
   if (await payoutTaken(db, payout, scope.developerId)) {
     return payoutInUse();
   }
-  await db.prepare('UPDATE developers SET payout_address = ? WHERE id = ?').bind(payout, scope.developerId).run();
+  try {
+    await db.prepare('UPDATE developers SET payout_address = ? WHERE id = ?').bind(payout, scope.developerId).run();
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      return payoutInUse();
+    }
+    throw err;
+  }
   return { status: 200, payload: { developerId: scope.developerId, payoutAddress: payout } };
 }
 
@@ -226,7 +302,13 @@ export async function rotateKey(db: D1Database, token: string, scope: KeyScope):
     return bad('admin_key_not_rotatable_here', 'Rotate CLEARINGHOUSE_API_KEY with wrangler secret put.');
   }
   const now = Math.floor(Date.now() / 1000);
-  await db.prepare('UPDATE api_keys SET revoked_at = ? WHERE key_hash = ?').bind(now, await sha256Hex(token)).run();
+  const revokeRes = await db
+    .prepare('UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? AND revoked_at IS NULL')
+    .bind(now, await sha256Hex(token))
+    .run();
+  if ((revokeRes.meta?.changes ?? 0) !== 1) {
+    return bad('key_already_rotated', 'This key has already been rotated or revoked. Use the newer key issued at rotation.', 409);
+  }
   if (scope.kind === 'wallet') {
     const walletKey = newKey('wallet');
     await storeKey(db, walletKey, { walletId: scope.walletId }, now);
@@ -242,7 +324,17 @@ export async function ledgerHistory(
   target: { walletId?: string; developerId?: string },
   limitRaw: unknown,
 ): Promise<Outcome> {
-  const limit = Math.min(100, Math.max(1, Number.isSafeInteger(Number(limitRaw)) ? Number(limitRaw) : 25));
+  let limit = 25;
+  if (limitRaw !== undefined && limitRaw !== null && limitRaw !== '') {
+    if (typeof limitRaw === 'number' && Number.isSafeInteger(limitRaw)) {
+      limit = Math.min(100, Math.max(1, limitRaw));
+    } else if (typeof limitRaw === 'string' && /^-?\d+$/.test(limitRaw.trim())) {
+      const parsed = Number(limitRaw.trim());
+      if (Number.isSafeInteger(parsed)) {
+        limit = Math.min(100, Math.max(1, parsed));
+      }
+    }
+  }
   const column = target.walletId ? 'wallet_id' : 'developer_id';
   const id = target.walletId ?? target.developerId;
   const rows = await db
@@ -292,10 +384,16 @@ function loadJwk(env: Ed25519Env): typeof cached {
   if (jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || !jwk.x || !jwk.d) {
     throw new Error('RECEIPT_ED25519_PRIVATE_JWK must be an Ed25519 private JWK');
   }
+  const key = crypto.subtle.importKey('jwk', jwk, { name: 'Ed25519' }, false, ['sign']);
+  key.catch(() => {
+    if (cached?.raw === raw) {
+      cached = null;
+    }
+  });
   cached = {
     raw,
     jwk,
-    key: crypto.subtle.importKey('jwk', jwk, { name: 'Ed25519' }, false, ['sign']),
+    key,
     kid: sha256Hex(jwk.x).then((h) => h.slice(0, 16)),
   };
   return cached;
