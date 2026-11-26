@@ -2124,7 +2124,7 @@ function renderWellKnownMcpManifest(): Record<string, unknown> {
     $schema: 'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json',
     name: 'io.github.Red-Center-Studio/agent-tollbooth-402',
     title: 'Agent Tollbooth 402',
-    version: '1.2.1',
+    version: '1.2.2',
     description:
       'HTTP 402 & x402 V2 billing, pricing quotes, signed receipts, and earnings history for APIs & MCP. Agents pay your own wallet in USDC.',
     websiteUrl: 'https://tollbooth.redcenterstudio.com/pay',
@@ -3490,7 +3490,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       },
       serverInfo: {
         name: 'agent-tollbooth-402-clearinghouse',
-        version: '1.2.1',
+        version: '1.2.2',
       },
     });
   }
@@ -3718,7 +3718,7 @@ export default {
         return jsonWithCors({
           status: 'ok',
           service: 'agent-tollbooth-402-clearinghouse',
-          version: '1.2.1',
+          version: '1.2.2',
           timestamp: Math.floor(Date.now() / 1000),
         });
       }

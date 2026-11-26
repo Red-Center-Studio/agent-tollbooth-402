@@ -1,7 +1,7 @@
 {
   "name": "agent-tollbooth-402",
   "displayName": "Agent Tollbooth 402",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Wrap Cloudflare Workers, Hono, Next.js, Express, and MCP servers in HTTP 402 with open x402 V2 USDC paid straight to your own wallet. Free DIY setup with 0% fee; Pro Pass from $39 USD once for hosted Base mainnet.",
   "author": {
     "name": "Red Center Studio",
