@@ -12,12 +12,22 @@ function send(message) {
 }
 
 function localPricingQuote(args) {
-  const priceMicros = Number(args?.priceMicros);
-  const callsPerMonth = Number(args?.callsPerMonth);
-  if (!Number.isSafeInteger(priceMicros) || priceMicros <= 0 || !Number.isSafeInteger(callsPerMonth) || callsPerMonth <= 0) {
+  const priceMicros = args?.priceMicros;
+  const callsPerMonth = args?.callsPerMonth;
+  if (
+    typeof priceMicros !== 'number' ||
+    typeof callsPerMonth !== 'number' ||
+    !Number.isSafeInteger(priceMicros) ||
+    priceMicros <= 0 ||
+    !Number.isSafeInteger(callsPerMonth) ||
+    callsPerMonth <= 0
+  ) {
     return { error: 'priceMicros and callsPerMonth must be positive safe integers' };
   }
   const gross = priceMicros * callsPerMonth;
+  if (!Number.isSafeInteger(gross)) {
+    return { error: 'monthly gross exceeds safe integer bounds' };
+  }
   const calc = (bps) => {
     const fee = Math.round((gross * bps) / 10_000);
     return { feeBps: bps, platformFeeMicros: fee, developerNetMicros: gross - fee };
@@ -49,6 +59,12 @@ rl.on('line', async (line) => {
     rpc = JSON.parse(trimmed);
   } catch {
     send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+    return;
+  }
+
+  if (!rpc || typeof rpc !== 'object' || Array.isArray(rpc) || rpc.jsonrpc !== '2.0' || typeof rpc.method !== 'string') {
+    const safeId = rpc && typeof rpc === 'object' && !Array.isArray(rpc) && rpc.id !== undefined ? rpc.id : null;
+    send({ jsonrpc: '2.0', id: safeId, error: { code: -32600, message: 'Invalid Request' } });
     return;
   }
 
