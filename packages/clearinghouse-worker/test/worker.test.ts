@@ -1165,6 +1165,10 @@ describe('Clearinghouse HTTP endpoints & end-to-end Dual-Rail flows', () => {
     expect(portalHtml).toContain('"@type":"Organization"');
     expect(portalHtml).toContain('"@type":"WebSite"');
 
+    const indexNow = await worker.fetch(new Request('https://tollbooth.redcenterstudio.com/bb248c92ca11417d89331a559758f87f.txt'), env, mockCtx);
+    expect(indexNow.status).toBe(200);
+    expect(await indexNow.text()).toBe('bb248c92ca11417d89331a559758f87f');
+
     // Crawlers, link checkers and uptime monitors send HEAD: same status and type as GET, no body.
     for (const p of ['/', '/pay', '/sitemap.xml', '/robots.txt', '/llms.txt']) {
       const head = await worker.fetch(new Request(`https://tollbooth.redcenterstudio.com${p}`, { method: 'HEAD' }), env, mockCtx);

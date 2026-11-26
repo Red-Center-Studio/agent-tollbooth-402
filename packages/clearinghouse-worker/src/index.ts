@@ -2155,6 +2155,9 @@ function renderRobotsTxt(): string {
   return 'User-agent: *\nAllow: /\nSitemap: https://tollbooth.redcenterstudio.com/sitemap.xml\n';
 }
 
+/** IndexNow key (public, served at /<key>.txt). Same key as the studio's other IndexNow submissions. */
+const INDEXNOW_KEY = 'bb248c92ca11417d89331a559758f87f';
+
 /** Date the public pages last changed; bump with each release that changes /, /pay or llms.txt. */
 const SITE_LASTMOD = '2026-11-26';
 
@@ -3771,6 +3774,11 @@ async function handleRequest(request: Request, env: Env, _ctx: ExecutionContext)
 
       if (request.method === 'GET' && url.pathname === '/favicon.ico') {
         return withCors(new Response(null, { status: 204, headers: { 'Cache-Control': 'public, max-age=86400' } }));
+      }
+
+      // IndexNow ownership file (public by design): lets Bing and other IndexNow engines accept recrawl pings.
+      if (request.method === 'GET' && url.pathname === `/${INDEXNOW_KEY}.txt`) {
+        return new Response(INDEXNOW_KEY, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       }
 
       if (request.method === 'GET' && url.pathname === '/robots.txt') {
